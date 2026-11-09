@@ -1,18 +1,19 @@
 import { WEAPONS, EQUIPMENT } from '../shared/weapons.js';
-import { MAP } from '../shared/map-data.js';
+import { MAPS, getMap } from '../shared/map-data.js';
+import { SKINS, CRATES, RARITY_LABELS, RARITY_COLORS } from '../shared/cosmetics.js';
 import { inZone } from '../shared/physics.js';
 
 const $ = id => document.getElementById(id);
-const DEFAULTS = Object.freeze({sensitivity: 1, master: .7, effects: .8, quality: 'medium', fov: 85, showFPS: false, renderScale: 1, reducedFlash: false});
+const DEFAULTS = Object.freeze({sensitivity: 1, master: .7, effects: .8, quality: 'medium', fov: 85, showFPS: false, renderScale: 1, reducedFlash: false, showNames: true});
 const EQUIPMENT_LABELS = {
   armor: ['Colete', 'Proteção para o tronco'], helmet: ['Capacete + colete', 'Proteção da cabeça e colete completo'],
   kit: ['Kit de desarme', 'Desarme a bomba em 3,5 segundos'], smoke: ['Smoke', '15 segundos de cobertura visual'], flash: ['Flashbang', 'Desoriente os adversários próximos']
 };
-const WEAPON_HINTS = {glock: '20 projéteis · semi / burst', usp: '12 projéteis · silenciada', ak: '30 projéteis · alto impacto', m4: '30 projéteis · recuo controlável', awp: '5 projéteis · mira de precisão'};
+const WEAPON_HINTS = {glock: '20 projéteis · semi / burst', usp: '12 projéteis · silenciada', ak: '30 projéteis · alto impacto', m4: '30 projéteis · recuo controlável', awp: '5 projéteis · mira de precisão', vector: 'SMG · disparo automático', scatter: 'Escopeta · múltiplos projéteis', pulse: 'Rifle · rajadas de 3 tiros'};
 const CONTROLS = [
-  ['Movimentar', 'W A S D'], ['Olhar ao redor', 'MOUSE'], ['Pular', 'ESPAÇO'], ['Andar em silêncio', 'SHIFT'],
-  ['Agachar', 'CTRL'], ['Atirar', 'MOUSE 1'], ['Mira / modo secundário', 'MOUSE 2'], ['Recarregar', 'R'],
-  ['Comprar equipamentos', 'B'], ['Plantar / desarmar', 'E'], ['Trocar arma', '1 / 2 / 3'], ['Smoke / Flashbang', '4 / 5'],
+  ['Movimentar', 'W A S D'], ['Olhar ao redor', 'MOUSE'], ['Pular / dash aéreo', 'ESPAÇO / ESPAÇO + C'], ['Andar em silêncio', 'SHIFT'],
+  ['Agachar / deslizar', 'C / CTRL'], ['Atirar', 'MOUSE 1'], ['Mira / modo secundário', 'MOUSE 2'], ['Recarregar', 'R'],
+  ['Comprar equipamentos', 'B'], ['Plantar / desarmar', 'E'], ['Rifle / pistola / faca', '1 / 2 / 3'], ['Smoke / Flashbang', '4 / 5'],
   ['Soltar a bomba', 'G'], ['Placar', 'TAB'], ['Menu / liberar mouse', 'ESC'], ['Trocar espectador', 'CLIQUE / ← →']
 ];
 const REASONS = {
@@ -38,6 +39,7 @@ function sanitizeSettings(value) {
   output.master = Math.min(1, Math.max(0, output.master)); output.effects = Math.min(1, Math.max(0, output.effects));
   output.fov = Math.min(110, Math.max(65, output.fov)); output.renderScale = Math.min(1.5, Math.max(.5, output.renderScale));
   output.quality = ['low', 'medium', 'high'].includes(value?.quality) ? value.quality : DEFAULTS.quality;
+  output.showNames = value?.showNames !== false;
   output.showFPS = !!value?.showFPS; output.reducedFlash = !!value?.reducedFlash;
   return output;
 }
@@ -50,9 +52,10 @@ export class UI {
     this._settings = sanitizeSettings(saved('counter-block.settings', DEFAULTS));
     this._category = 'secondary'; this._localId = null; this._state = null; this._player = null;
     this._settingsReturn = 'menu'; this._controlsReturn = 'menu'; this._lastBuyKey = ''; this._roomKey = '';
+    this._profile = null; this._profileKey = ''; this._collectionTab = 'crates'; this._socialReturn = 'menu'; this._openingCrate = false;
     this._toasts = new Set(); this._feedTimers = new Set();
     $('nickname').value = String(saved('counter-block.nickname', '')).slice(0, 18);
-    this.bindButtons(); this.bindSettings(); this.renderControls(); this.showScreen('menu');
+    this.bindButtons(); this.bindSocial(); this.bindSettings(); this.renderControls(); this.showScreen('menu');
   }
 
   get settings() { return {...this._settings}; }
@@ -104,10 +107,147 @@ export class UI {
     }));
     // These overlays own Escape even when a slider or select has focus.
     document.addEventListener('keydown', event => {
-      if (event.code !== 'Escape' || !['settings', 'controls'].includes(this._modal)) return;
+      if (event.code !== 'Escape' || !['settings', 'controls', 'friends', 'collection'].includes(this._modal)) return;
       event.preventDefault(); event.stopImmediatePropagation();
-      if (this._modal === 'settings') this.closeSettings(); else this.closeControls();
+      if (this._modal === 'settings') this.closeSettings(); else if (this._modal === 'controls') this.closeControls(); else this.closeSocial();
     }, true);
+  }
+
+
+  bindSocial() {
+    $('main-friends').addEventListener('click', () => this.showFriends());
+    $('main-collection').addEventListener('click', () => this.showCollection());
+    $('pause-friends').addEventListener('click', () => this.showFriends('pause'));
+    $('pause-collection').addEventListener('click', () => this.showCollection('pause'));
+    $('fullscreen-button').addEventListener('click', () => this.invoke('fullscreen'));
+    $('friends-back').addEventListener('click', () => this.closeSocial());
+    $('collection-back').addEventListener('click', () => this.closeSocial());
+    $('friend-code').addEventListener('input', event => { event.target.value = event.target.value.replace(/[^a-z]/gi, '').toUpperCase(); });
+    $('friend-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const code = $('friend-code').value.trim().toUpperCase();
+      if (!/^[A-Z]{8}$/.test(code)) return this.toast('O código de amigo tem 8 letras.');
+      if (!this._profile) return this.toast('Aguarde a conexão com seu perfil.');
+      const button = $('friend-form').querySelector('button'); button.disabled = true;
+      await this.invoke('friendRequest', code); button.disabled = false;
+    });
+    $('copy-profile-code').addEventListener('click', async () => {
+      if (!this._profile) return;
+      try { await navigator.clipboard.writeText(this._profile.id); this.toast('Código de amigo copiado.'); }
+      catch { this.toast(`Seu código de amigo: ${this._profile.id}`); }
+    });
+    for (const type of ['weapon', 'character']) $(`open-${type}-crate`).addEventListener('click', async () => {
+      if (this._openingCrate || !this._profile || !(this._profile.crates?.[type] > 0)) return;
+      this._openingCrate = true; this.renderCollection();
+      await this.invoke('openCrate', type);
+      this._openingCrate = false; this.renderCollection();
+    });
+    document.querySelectorAll('[data-collection]').forEach(button => button.addEventListener('click', () => {
+      this._collectionTab = button.dataset.collection; this.renderCollection();
+    }));
+    const select = $('map-select');
+    for (const map of Object.values(MAPS)) {
+      const option = document.createElement('option'); option.value = map.id; option.textContent = map.name; select.append(option);
+    }
+    select.addEventListener('change', () => this.invoke('selectMap', select.value));
+    this.renderFriends(); this.renderCollection();
+  }
+
+  showFriends(returnTo = this._screen === 'game' ? 'pause' : this._screen) {
+    this.closeOverlays(); this._socialReturn = returnTo; this._modal = 'friends';
+    toggle('overlay-friends', true); this.renderFriends();
+  }
+
+  showCollection(returnTo = this._screen === 'game' ? 'pause' : this._screen) {
+    this.closeOverlays(); this._socialReturn = returnTo; this._modal = 'collection';
+    toggle('overlay-collection', true); this.renderCollection();
+  }
+
+  closeSocial() {
+    toggle('overlay-friends', false); toggle('overlay-collection', false); this._modal = null;
+    if (this._socialReturn === 'pause') this.showPause(true);
+  }
+
+  /** Profile state is owned by the server. Rendering never grants items or friends. */
+  updateProfile(profile) {
+    this._profile = profile || null;
+    const key = JSON.stringify(profile);
+    if (key === this._profileKey) return;
+    this._profileKey = key;
+    text('menu-profile-code', profile?.id || 'CONECTANDO');
+    text('friends-count', profile?.friends?.length || 0);
+    text('cases-count', (profile?.crates?.weapon || 0) + (profile?.crates?.character || 0));
+    this.renderFriends(); this.renderCollection();
+  }
+
+  renderFriends() {
+    const profile = this._profile;
+    text('profile-code', profile?.id || 'CONECTANDO');
+    $('friend-form').querySelector('button').disabled = !profile;
+    $('copy-profile-code').disabled = !profile;
+    text('friend-count', profile?.friends?.length || 0); text('request-count', profile?.requests?.length || 0);
+    const list = $('friend-list'), requests = $('friend-requests'); list.replaceChildren(); requests.replaceChildren();
+    const empty = (container, value) => { const node = document.createElement('p'); node.className = 'social-empty'; node.textContent = value; container.append(node); };
+    if (!profile?.friends?.length) empty(list, 'Sua lista está vazia. Troque códigos para adicionar seus amigos.');
+    if (!profile?.requests?.length) empty(requests, 'Nenhuma solicitação pendente.');
+    for (const [collection, container, incoming] of [[profile?.friends || [], list, false], [profile?.requests || [], requests, true]]) {
+      for (const friend of collection) {
+        const row = document.createElement('div'); row.className = `social-row${friend.online ? ' is-online' : ''}`;
+        const label = document.createElement('div'), name = document.createElement('strong'), detail = document.createElement('small');
+        name.textContent = friend.nickname || friend.id;
+        detail.textContent = incoming ? friend.id : `${friend.id} · ${friend.online ? (friend.roomCode || friend.room) ? 'EM SALA' : 'ONLINE' : 'OFFLINE'}`;
+        label.append(name, detail); row.append(label);
+        const action = (textValue, callback, disabled = false) => {
+          const button = document.createElement('button'); button.className = 'button secondary'; button.textContent = textValue; button.disabled = disabled;
+          button.addEventListener('click', async () => { button.disabled = true; await this.invoke(callback, friend.id); this.renderFriends(); }); row.append(button);
+        };
+        if (incoming) action('ACEITAR', 'friendAccept');
+        else { action('ENTRAR', 'friendJoin', !friend.online || !(friend.roomCode || friend.room)); action('REMOVER', 'friendRemove'); }
+        container.append(row);
+      }
+    }
+  }
+
+  renderCollection() {
+    const profile = this._profile, tab = this._collectionTab;
+    document.querySelectorAll('[data-collection]').forEach(button => button.classList.toggle('active', button.dataset.collection === tab));
+    toggle('collection-crates', tab === 'crates'); toggle('collection-skins', tab !== 'crates');
+    for (const type of ['weapon', 'character']) {
+      text(`${type}-crate-count`, profile?.crates?.[type] || 0);
+      $(`open-${type}-crate`).disabled = this._openingCrate || !profile || !(profile.crates?.[type] > 0);
+    }
+    const odds = Object.values(CRATES).map(crate => {
+      const totals = {};
+      for (const drop of crate.drops || []) { const rarity = SKINS[drop.skin]?.rarity || 'common'; totals[rarity] = (totals[rarity] || 0) + drop.weight; }
+      const total = Object.values(totals).reduce((sum, weight) => sum + weight, 0) || 1;
+      return `${crate.name}: ${Object.entries(totals).map(([rarity, weight]) => `${RARITY_LABELS[rarity] || rarity} ${Math.round(weight / total * 100)}%`).join(' · ')}`;
+    });
+    text('crate-odds', `${odds.join(' | ')}. Repetidas são identificadas; cada abertura consome uma caixa.`);
+    text('profile-sync-note', profile ? `PERFIL ${profile.id} · SALVO NESTE SERVIDOR · COSMÉTICOS SEM VANTAGEM DE COMBATE` : 'Conecte-se ao servidor para acessar sua coleção.');
+    const list = $('collection-skins'); list.replaceChildren();
+    if (tab !== 'crates') {
+      for (const id of profile?.owned || []) {
+        const skin = SKINS[id]; if (!skin || (skin.kind !== tab && skin.kind !== 'both')) continue;
+        const card = document.createElement('article'); card.className = 'skin-card'; card.dataset.skin = id;
+        card.style.setProperty('--rarity-color', RARITY_COLORS[skin.rarity] || '#b6d2de');
+        const preview = document.createElement('div'); preview.className = `skin-preview ${tab}`;
+        for (const color of Object.values(skin.colors || {}).slice(0, 4)) { const swatch = document.createElement('i'); swatch.style.background = color; preview.append(swatch); }
+        const title = document.createElement('h3'); title.textContent = skin.name;
+        const rarity = document.createElement('small'); rarity.textContent = RARITY_LABELS[skin.rarity] || skin.rarity;
+        const button = document.createElement('button'); button.className = 'button secondary full';
+        const equipped = (profile?.equipped?.[tab] || 'default') === id;
+        button.textContent = equipped ? 'EQUIPADO ✓' : 'EQUIPAR'; button.disabled = equipped;
+        button.addEventListener('click', async () => { button.disabled = true; await this.invoke('equipSkin', tab, id); this.renderCollection(); });
+        card.append(preview, title, rarity, button); list.append(card);
+      }
+      if (!list.childElementCount) { const empty = document.createElement('p'); empty.className = 'social-empty'; empty.textContent = 'Abra caixas para conquistar novos visuais.'; list.append(empty); }
+    }
+    const drop = profile?.lastDrop, dropId = typeof drop?.skin === 'string' ? drop.skin : drop?.skinId || drop?.skin?.id;
+    const skin = SKINS[dropId]; toggle('crate-result', !!skin);
+    if (skin) {
+      $('crate-result').style.setProperty('--rarity-color', RARITY_COLORS[skin.rarity] || '#b6d2de');
+      text('crate-result', `${drop.duplicate ? 'VISUAL REPETIDO' : 'NOVO VISUAL'} · ${skin.name} · ${RARITY_LABELS[skin.rarity] || skin.rarity}`);
+    }
   }
 
   goHome() {
@@ -164,7 +304,7 @@ export class UI {
   }
 
   closeOverlays() {
-    for (const name of ['pause', 'settings', 'controls', 'buy', 'score']) toggle(`overlay-${name}`, false);
+    for (const name of ['pause', 'settings', 'controls', 'buy', 'score', 'friends', 'collection']) toggle(`overlay-${name}`, false);
     this._paused = false; this._buyOpen = false; this._scoreOpen = false; this._modal = null;
   }
 
@@ -225,6 +365,11 @@ export class UI {
         button.textContent = local?.team === team ? 'SEU TIME ✓' : `ENTRAR NO TIME ${team} →`;
       }
     }
+    const map = getMap(state.mapId);
+    text('lobby-map-name', map.name);
+    text('map-dimensions', `${map.bounds.maxX-map.bounds.minX} × ${map.bounds.maxZ-map.bounds.minZ} m · HOST ESCOLHE A ARENA`);
+    $('map-select').value = map.id || 'dust';
+    $('map-select').disabled = host !== localId || state.phase !== 'lobby';
     const isHost = host === localId;
     $('start-match').disabled = !isHost;
     $('start-match').title = isHost ? 'Iniciar a partida' : 'Apenas o host pode iniciar a partida';
@@ -237,6 +382,7 @@ export class UI {
     if (!state) return;
     this._state = state; this._player = player;
     if (player?.id) this._localId = player.id;
+    const map = getMap(state.mapId);
     const players = state.players || [], bomb = state.bomb || {}, now = stats.now || state.serverTime || Date.now();
     text('score-t', state.score?.T || 0); text('score-ct', state.score?.CT || 0);
     text('alive-t', `${players.filter(p => p.team === 'T' && p.alive).length} VIVOS`);
@@ -246,7 +392,10 @@ export class UI {
     const ends = bombPlanted ? bomb.explodesAt : state.roundEndsAt;
     const remaining = Math.max(0, Math.ceil(((ends || now) - now) / 1000));
     text('round-time', state.phase === 'finished' ? 'FIM' : `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`);
-    text('bomb-state', bombPlanted ? `BOMBA PLANTADA · ${bomb.site || ''}` : bomb.state === 'dropped' ? 'BOMBA NO CHÃO' : 'DUST BLOCK');
+    text('bomb-state', bombPlanted ? `BOMBA PLANTADA · ${bomb.site || ''}` : bomb.state === 'dropped' ? 'BOMBA NO CHÃO' : map.name.toUpperCase());
+    const cooldown = Math.max(0, stats.dashCooldown ?? player?.dashCooldown ?? 0);
+    text('dash-status', stats.slideTime > 0 || player?.slideTime > 0 ? 'DESLIZANDO' : stats.dashTime > 0 || player?.dashTime > 0 ? 'DASH!' : cooldown > 0 ? `DASH · ${cooldown.toFixed(1)}s` : 'DASH PRONTO · ESPAÇO + C');
+    $('dash-status').classList.toggle('dash-ready', cooldown <= 0);
     document.querySelector('.round-clock').classList.toggle('planted', bombPlanted);
     text('network-stats', `${Math.max(0, Math.round(stats.ping ?? player?.ping ?? 0))} MS`);
     toggle('fps-display', this._settings.showFPS); text('fps-display', `${Math.round(stats.fps || 0)} FPS`);
@@ -257,23 +406,23 @@ export class UI {
       const weapon = WEAPONS[player.weapon], ammo = player.ammo?.[player.weapon] || {};
       text('health-value', Math.max(0, Math.ceil(player.hp ?? 100))); text('armor-value', player.armor || 0);
       text('money-value', money(player.money)); text('weapon-name', weapon?.name || (player.weapon === 'smoke' ? 'SMOKE' : player.weapon === 'flash' ? 'FLASHBANG' : 'SEM ARMA'));
-      text('ammo-value', ammo.mag ?? (player.inventory?.includes(player.weapon) ? 1 : '—')); text('reserve-value', ammo.reserve ?? '—');
+      text('ammo-value', weapon?.melee ? '∞' : ammo.mag ?? (player.inventory?.includes(player.weapon) ? 1 : '—')); text('reserve-value', ammo.reserve ?? '—');
       text('reload-label', player.reloadingAt > now || player.reloadUntil > now || player.reloading ? 'RECARREGANDO' : player.burst && player.weapon === 'glock' ? 'MODO BURST' : player.scoped ? 'MIRA ATIVA' : 'PRONTA');
       toggle('bomb-carrier', bomb.carrier === player.id && bomb.state === 'carried');
       const buyLeft = Math.max(0, Math.ceil(((state.buyEndsAt || 0) - now) / 1000));
-      const canBuy = player.alive && state.phase === 'playing' && buyLeft > 0 && MAP.buyZones?.[player.team] && inZone(player, MAP.buyZones[player.team]);
+      const canBuy = player.alive && state.phase === 'playing' && buyLeft > 0 && map.buyZones?.[player.team] && inZone(player, map.buyZones[player.team]);
       toggle('buy-hint', !!canBuy);
       text('buy-hint', canBuy ? `[B] COMPRAR · ${buyLeft}s` : '');
       const interaction = player.interaction;
       this.setInteraction(interaction);
-      let location = 'DUST BLOCK';
-      if (MAP.sites) { for (const [site, zone] of Object.entries(MAP.sites)) if (inZone(player, zone)) location = `BOMBSITE ${site}`; }
-      if (MAP.buyZones?.[player.team] && inZone(player, MAP.buyZones[player.team])) location = `BASE ${player.team}`;
+      let location = map.name.toUpperCase();
+      if (map.sites) { for (const [site, zone] of Object.entries(map.sites)) if (inZone(player, zone)) location = `BOMBSITE ${site}`; }
+      if (map.buyZones?.[player.team] && inZone(player, map.buyZones[player.team])) location = `BASE ${player.team}`;
       text('location-label', location);
       let context = '';
       if (player.alive && state.phase === 'playing' && !interaction) {
         const bombDistance = Math.hypot(player.x - (bomb.x || 0), player.y - (bomb.y || 0), player.z - (bomb.z || 0));
-        if (player.team === 'T' && bomb.carrier === player.id && Object.values(MAP.sites || {}).some(zone => inZone(player, zone))) context = '[E] SEGURE PARA PLANTAR A BOMBA';
+        if (player.team === 'T' && bomb.carrier === player.id && Object.values(map.sites || {}).some(zone => inZone(player, zone))) context = '[E] SEGURE PARA PLANTAR A BOMBA';
         else if (player.team === 'CT' && bomb.state === 'planted' && bombDistance < 3) context = `[E] SEGURE PARA DESARMAR${player.kit ? ' · COM KIT' : ''}`;
         else if (player.team === 'T' && bomb.state === 'dropped' && bombDistance < 3) context = 'APROXIME-SE PARA RECUPERAR A BOMBA';
       }
@@ -283,7 +432,7 @@ export class UI {
       if (this._equipmentKey !== key) {
         this._equipmentKey = key; const bar = $('equipment-bar'); bar.replaceChildren();
         const primary = inventory.find(id => WEAPONS[id]?.slot === 'primary'), secondary = inventory.find(id => WEAPONS[id]?.slot === 'secondary');
-        for (const [slot, id] of [[1, primary], [2, secondary], [4, inventory.includes('smoke') && 'smoke'], [5, inventory.includes('flash') && 'flash']]) {
+        for (const [slot, id] of [[1, primary], [2, secondary], [3, inventory.includes('knife') && 'knife'], [4, inventory.includes('smoke') && 'smoke'], [5, inventory.includes('flash') && 'flash']]) {
           if (!id) continue;
           const line = document.createElement('span'); line.textContent = `${slot}  ${WEAPONS[id]?.name || id.toUpperCase()}`;
           line.className = player.weapon === id ? 'equipped' : ''; bar.append(line);
@@ -324,7 +473,7 @@ export class UI {
 
   renderBuy() {
     const player = this._player || {}, inventory = Array.isArray(player.inventory) ? player.inventory : Object.keys(player.inventory || {});
-    const state = this._state, canBuy = player.alive && state?.phase === 'playing' && state.buyEndsAt > state.serverTime && inZone(player, MAP.buyZones?.[player.team]);
+    const state = this._state, map = getMap(state?.mapId), canBuy = player.alive && state?.phase === 'playing' && state.buyEndsAt > state.serverTime && inZone(player, map.buyZones?.[player.team]);
     text('buy-balance', money(player.money));
     const list = $('buy-items'); list.replaceChildren();
     const items = this._category === 'primary' || this._category === 'secondary'

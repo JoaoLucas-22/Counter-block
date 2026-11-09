@@ -1,6 +1,6 @@
 # Counter Block
 
-FPS tático 3D multiplayer para navegador, com o mapa original **Dust Block**, personagens low-poly e servidor Node.js autoritativo. O mesmo processo Express entrega o cliente Three.js e mantém as partidas Socket.io. Não é necessário instalar o jogo nos computadores dos amigos.
+FPS 3D multiplayer para navegador, com arenas originais, mobilidade de dash e deslize, personagens low-poly e servidor Node.js autoritativo. O mesmo processo Express entrega o cliente Three.js e mantém as partidas Socket.io. Não é necessário instalar o jogo nos computadores dos amigos.
 
 ## Executar no Windows, macOS ou Linux
 
@@ -49,37 +49,54 @@ O host é transferido quando ele desconecta. A sessão usa um token aleatório p
 | Mouse | Olhar |
 | Espaço | Pular; novos saltos exigem soltar e pressionar novamente |
 | Shift | Andar silenciosamente |
-| Ctrl | Agachar |
+| C | Agachar; é a tecla recomendada para evitar atalhos do navegador |
+| Ctrl | Agachar como alternativa, sujeito aos atalhos reservados pelo navegador |
+| Espaço + C, no ar | Dash aéreo; uma carga por salto e intervalo entre usos |
+| C ao correr no chão | Deslizar |
 | Mouse 1 | Atirar / arremessar utilitário equipado |
 | Mouse 2 | Alternar burst da Glock-18 ou mira da AWP |
 | R | Recarregar |
 | B | Abrir ou fechar compra |
 | E, segurado | Plantar ou desarmar |
-| 1 / 2 / 3 | Arma principal / pistola / utilitário disponível |
+| 1 / 2 / 3 | Arma principal / pistola / faca |
 | 4 / 5 | Arremessar smoke / flashbang comprada |
 | G | Soltar a bomba |
 | Tab, segurado | Placar |
 | Esc | Liberar mouse e abrir pausa |
 | Setas esquerda / direita | Alternar aliado no modo espectador |
 
-Clique em **Entrar em combate** ou **Retomar** para capturar o mouse. A captura depende de uma interação do usuário; o navegador pode recusá-la quando a página está dentro de um frame sem a permissão apropriada. Não há versão para controles de toque.
+Clique em **Entrar em combate** ou **Retomar** para capturar o mouse. A captura depende de uma interação do usuário; o navegador pode recusá-la quando a página está dentro de um frame sem a permissão apropriada. Não há versão para controles de toque. A opção **Tela cheia** tenta ativar também a captura de teclado quando o navegador oferece suporte. Alguns navegadores reservam Ctrl+W para fechar a aba e não permitem que a página intercepte o atalho; **use C para agachar** nesses casos.
 
 ## Regras implementadas
 
 - Salas independentes com códigos únicos, até dez jogadores e cinco por lado, nickname, host, equipes, pronto e início com poucos jogadores.
-- Física compartilhada em passo fixo de 60 Hz: aceleração, atrito, inércia, frenagem na direção oposta, controle aéreo, salto, agachamento, caminhada silenciosa, colisões, pequenos degraus e rampa.
+- Física compartilhada em passo fixo de 60 Hz: aceleração, atrito, inércia, frenagem na direção oposta, controle aéreo, salto, agachamento, caminhada silenciosa, colisões, pequenos degraus e rampas. Dash aéreo e deslize usam as mesmas colisões e limites no cliente e no servidor.
 - Predição local, reconciliação com comandos reconhecidos, interpolação de jogadores remotos com buffer de 100 ms e snapshots de 20 Hz.
 - Disparos calculados no servidor por raios contra cabeça, tronco, braços e pernas. Paredes, caixas, chão e rampas bloqueiam os tiros. Vida, colete, capacete, kills, deaths, assistências e recompensas são autoritativos.
-- Glock-18 semiautomática/burst, USP-S, AK-47, M4A4 e AWP, com modelos geométricos originais, munição, cadência, recarga, padrões de recuo e dispersão conforme velocidade e estado aéreo.
+- Glock-18 semiautomática/burst, USP-S, AK-47, M4A4, AWP, SMG Vector-9, escopeta Scatter-8, rifle de rajada Pulse-3 e Faca Block. Os modelos são geométricos e originais; dano, alcance, munição, cadência, rajadas, recarga e dispersão são validados no servidor. A escopeta dispara múltiplos projéteis consumindo uma unidade de munição; a faca tem alcance curto e não consome munição.
 - Smoke com arremesso, ricochetes e fumaça por 15 segundos. Flashbang com tempo, direção do olhar, distância e obstrução por paredes. Há opção para reduzir a intensidade visual da flash.
 - Bomba carregável, soltável e recuperável por T; plantio nos sites A/B e desarme por CT com progresso cancelado quando a interação é interrompida.
 - Rounds de 115 segundos; bomba de 40 segundos; plantio de 3,5 segundos; desarme de 7 segundos ou 3,5 com kit; compra nos primeiros 15 segundos e apenas na própria base.
 - Todos os T mortos **depois** do plantio deixam a bomba ativa. Sem bomba plantada, eliminar todos os T dá vitória aos CT. Eliminar todos os CT dá vitória aos T.
 - Partida de até 12 rounds, encerrada antes se uma equipe alcançar sete vitórias; 6 × 6 é empate. Os lados são alternados após seis rounds. O host pode reiniciar uma partida concluída.
 - Economia inicial de $800, compras e saldo validados no servidor, recompensas por eliminação, assistência, vitória, derrota e plantio/desarme. Equipamentos de sobreviventes são preservados entre rounds, exceto na troca de lados. Carregadores e reservas das armas de fogo são repostos automaticamente no início de cada round, sem custo adicional.
-- HUD, placar, kill feed, compra, pausa, configurações, radar de aliados e sites, áudio sintetizado original e personagens remotos articulados.
+- HUD, placar, kill feed, compra, pausa, configurações, radar de aliados e sites, áudio sintetizado original e personagens remotos articulados. Nomes ficam acima de personagens visíveis, respeitando paredes e fumaça; a exibição pode ser desligada nas configurações.
 
 Nas configurações é possível ajustar sensibilidade, volumes, FOV, qualidade, escala de renderização, contador de FPS e intensidade reduzida da flash. A qualidade controla sombras e detalhes, e a resolução tem limite de pixel ratio para reduzir o custo da renderização.
+
+## Mapas e mobilidade
+
+O host escolhe o mapa no lobby antes de iniciar a partida. **Dust Block** mantém a arena original; **Neon Yard** e **Sky Depot** acrescentam arenas maiores, com outras rotas, coberturas e paletas. Cada sala possui seu próprio mapa: a escolha de uma sala não altera colisões ou partidas de outra sala.
+
+No chão, pressione C enquanto corre para deslizar. No ar, combine Espaço e C para executar um dash na direção de movimento. A carga aérea só retorna ao tocar o chão e há um intervalo entre dashes; a HUD mostra a disponibilidade. O servidor calcula o deslocamento e impede atravessar paredes durante o impulso.
+
+## Amigos, caixas e skins
+
+Abra **Amigos** no menu para consultar seu código pessoal de oito letras. Envie uma solicitação usando o código do amigo; a outra pessoa precisa aceitá-la. A lista mostra quem está conectado ao mesmo servidor e permite entrar na sala de um amigo online, respeitando as regras e a lotação da sala. A lista de amigos pertence a esse servidor e não se comunica com Roblox ou outros serviços.
+
+Cada eliminação validada pelo servidor concede **uma caixa gratuita**, de arma ou personagem, ao autor da eliminação. Abra as caixas em **Coleção**, veja o resultado e equipe as skins que já possui. Os acabamentos de arma também se aplicam à faca. As caixas consomem uma unidade ao abrir; skins repetidas são identificadas como repetidas. As chances e raridades aparecem na coleção. As skins alteram cores e materiais, sem aumentar dano, vida, velocidade ou precisão. Não existem compras de caixas por dinheiro real.
+
+Os perfis, amigos, caixas e skins ficam em `data/profiles.json`, gravado pelo servidor. O navegador conserva uma credencial privada em `localStorage` para recuperar o mesmo perfil nesse servidor. Mantenha uma cópia da pasta `data/` ao atualizar o jogo e use armazenamento persistente na hospedagem. Limpar os dados do navegador perde a credencial local; mudar de endereço/IP ou de navegador também pode usar outro perfil. Não há login com senha, recuperação por e-mail ou sincronização entre servidores. O token do perfil é diferente do token temporário de reconexão da partida.
 
 ## Testar
 
@@ -90,13 +107,15 @@ npm run check
 
 Os testes usam `node:test`. As integrações abrem um servidor HTTP real e múltiplos clientes `socket.io-client` por WebSocket, com relógio de simulação controlado para verificar os tempos sem esperar rounds completos.
 
-A suíte cobre salas e códigos, lotação, equipes, permissões do host, pronto, início solo, snapshots para dois clientes, comandos inválidos e antigos, velocidade, compra, tiros/cadência/munição/recarga, dano/headshot/obstruções, eliminações, bomba/plantio/cancelamento/desarme/kit, fim e reinício de rounds, troca de lados, reconexão, transferência de host e limpeza. Há testes de física, smoke, flash, interpolação, menus DOM, correspondência da geometria do mapa e descarte dos recursos 3D.
+A suíte cobre salas e códigos, lotação, equipes, permissões do host, pronto, início solo, snapshots para dois clientes, comandos inválidos e antigos, velocidade, compra, tiros/cadência/munição/recarga, dano/headshot/obstruções, eliminações, bomba/plantio/cancelamento/desarme/kit, fim e reinício de rounds, troca de lados, reconexão, transferência de host e limpeza. Há testes de física, dash/deslize, isolamento entre mapas, smoke, flash, interpolação, menus DOM, correspondência da geometria do mapa e descarte dos recursos 3D. Os perfis têm testes de persistência, privacidade do token, amizade com consentimento e abertura/equipagem de cosméticos validadas pelo servidor.
 
-O teste de integração do cliente executa o módulo `game.js` real e seus menus contra o servidor Socket.io real: cria sala, inicia, move o personagem, compra, troca equipamento, fecha a loja e sai. Esse teste adapta as fronteiras de DOM, canvas, renderizador e captura de mouse; ele verifica a integração de código, sem desenhar pixels na GPU.
+O teste de integração do cliente executa o módulo `game.js` real e seus menus contra o servidor Socket.io real: cria sala, inicia, move e agacha o personagem, solicita bloqueio de Ctrl+W sem perder o movimento, compra, troca equipamento, fecha a loja e sai. Com um segundo cliente real, ele também envia e aceita amizade e entra na sala pelo botão do amigo online. Esse teste adapta as fronteiras de DOM, canvas, renderizador e captura de mouse; ele verifica a integração de código, sem desenhar pixels na GPU.
 
 Para uma conferência manual, abra uma janela normal e uma janela anônima, entre na mesma sala e use nicknames diferentes. Inicie os dois lados, atravesse o mapa, teste tiros, compra, bomba e a passagem ao round seguinte. Janelas separadas permitem sessões independentes; a captura de mouse só controla a janela em foco.
 
-**Limite desta entrega:** os testes de servidor e física foram executados com clientes Socket.io reais. Não houve validação de renderização nem de Pointer Lock com dois navegadores reais neste ambiente, que não disponibilizou a rota de controle de navegador exigida pelo fluxo de preview. A meta de 60 FPS depende do hardware e ainda precisa de benchmark em computadores reais.
+**Limite da verificação automatizada:** os testes de integração usam clientes Socket.io reais. Os testes DOM e de construção de geometria adaptam as fronteiras de canvas e renderizador, portanto não comprovam rasterização, captura de atalhos pelo navegador nem desempenho da GPU. Confira esses comportamentos nos computadores que participarão da partida; 60 FPS depende do hardware.
+
+A atualização 0.2 também foi conferida em Chromium real, com duas sessões independentes e WebGL2: amizade, seleção de mapas, lobby, captura de mouse, movimento/agachamento, dash, faca, Escape, nome sobre personagem e abertura/equipagem de uma caixa gerada por eliminação preparada no servidor. Não ocorreram erros JavaScript. A renderização usou SwiftShader por software; esse teste não mede o desempenho da placa de vídeo dos jogadores nem garante que todo navegador libere atalhos reservados como Ctrl+W.
 
 ## Arquitetura
 
@@ -106,12 +125,14 @@ counter-block/
 ├── server.js                 # HTTP, Socket.io, salas, limites de eventos e execução
 ├── server/
 │   ├── game.js               # Regras autoritativas, combate, economia, bomba e rounds
-│   └── grenades.js           # Física e efeitos de granadas no servidor
+│   ├── grenades.js           # Física e efeitos de granadas no servidor
+│   └── profiles.js           # Perfis, amigos, caixas e skins persistentes
 ├── shared/
 │   ├── config.js             # Tempos e regras
 │   ├── physics.js            # Movimento, colisões, raios e hitboxes sem DOM
 │   ├── map-data.js           # Geometria, zonas e spawns originais
-│   └── weapons.js            # Arsenal, preços e configurações
+│   ├── weapons.js            # Arsenal, preços e configurações
+│   └── cosmetics.js          # Catálogo original de skins e raridades
 ├── public/
 │   ├── index.html
 │   ├── style.css
@@ -130,7 +151,7 @@ O navegador envia comandos numerados de movimento, orientação e ações; não 
 
 A compensação de latência consulta um histórico limitado de posições. O recuo máximo é de **200 ms**, limitado também pelo RTT medido mais uma margem. Não há promessa de compensação perfeita para ping alto. A arquitetura reduz formas simples de trapaça; não substitui auditoria de segurança ou anticheat completo. Os estados enviados aos clientes incluem inventários e posições dos jogadores, portanto não há filtragem contra wallhack no protocolo.
 
-O servidor é **persistente enquanto o processo está em execução**, com salas em memória. Não há banco de dados de contas, ranking, retomada após reinício do processo, matchmaking público, voz, sistema de demos ou bots. A implementação deve rodar em **uma única instância Node.js**. Redis Adapter sozinho não distribui a simulação: múltiplas réplicas exigem roteamento de salas e um proprietário autoritativo por partida.
+O servidor é **persistente enquanto o processo está em execução**, com salas em memória. Os perfis e cosméticos são persistidos em JSON, mas não há retomada das partidas após reinício do processo, ranking público, matchmaking, voz, sistema de demos ou bots. A implementação deve rodar em **uma única instância Node.js**. Redis Adapter sozinho não distribui a simulação: múltiplas réplicas exigem roteamento de salas e um proprietário autoritativo por partida.
 
 ## Deploy em Node.js com WebSockets persistentes
 
@@ -143,7 +164,7 @@ Nenhuma publicação externa foi realizada. O projeto inclui `render.yaml` como 
 3. Selecione a pasta que contém `package.json` como diretório raiz, quando o repositório tiver uma pasta externa.
 4. Build: `npm ci`. Start: `npm start`. Health check: `/health`.
 5. Deixe a plataforma definir `PORT`; o servidor escuta em `0.0.0.0`.
-6. Use uma única instância e um plano com processo contínuo para sessões estáveis. Se a hospedagem suspender ou reiniciar o processo, as salas serão perdidas.
+6. Use uma única instância e um plano com processo contínuo para sessões estáveis. Se a hospedagem suspender ou reiniciar o processo, as salas serão perdidas. Monte armazenamento persistente para `data/` para conservar perfis, amigos e cosméticos.
 7. Compartilhe o endereço HTTPS final e, depois, o código da sala.
 
 ### Railway
@@ -158,4 +179,4 @@ Hospedagem puramente estática ou funções serverless convencionais não mantê
 
 ## Assets e propriedade
 
-A geometria do mapa, modelos e sons sintetizados foram criados para este projeto. Nenhum arquivo, mapa, textura, áudio ou modelo proprietário de Counter-Strike foi incluído. Os nomes das classes de armas identificam a configuração do arsenal; os modelos visuais são originais. As bibliotecas externas mantêm suas próprias licenças.
+A geometria do mapa, modelos e sons sintetizados foram criados para este projeto. Nenhum arquivo, mapa, textura, áudio ou modelo proprietário de Counter-Strike, Roblox ou Rivals foi incluído. A direção de ritmo e mobilidade se inspira no gênero de arenas; mapas, modelos, personagens e skins são originais. Os nomes das classes de armas identificam a configuração do arsenal; os modelos visuais são originais. As bibliotecas externas mantêm suas próprias licenças.

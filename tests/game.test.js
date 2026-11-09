@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { parseHTML } from 'linkedom';
 import { io } from 'socket.io-client';
 import { createGameServer } from '../server.js';
+import { WEAPONS } from '../shared/weapons.js';
 
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 async function until(predicate, message, frame = () => {}, timeout = 2500) {
@@ -20,7 +21,7 @@ async function until(predicate, message, frame = () => {}, timeout = 2500) {
  * This checks module wiring and gameplay input, not browser rasterization/WebGL.
  */
 test('game entry connects real menu, lobby, movement, shop, equipment and rendering state', async t => {
-  const server = createGameServer();
+  const server = createGameServer({ profilePath:null });
   await server.listen(0);
   const url = `http://127.0.0.1:${server.httpServer.address().port}`;
   const originalInterval = globalThis.setInterval;
@@ -124,10 +125,11 @@ test('game entry connects real menu, lobby, movement, shop, equipment and render
   const $ = id => document.getElementById(id);
   const visible = id => !$(id).classList.contains('hidden');
   const click = id => $(id).dispatchEvent(new domWindow.Event('click', { bubbles: true }));
-  const key = (code, type = 'keydown') => {
+  const key = (code, type = 'keydown', properties = {}) => {
     const event = new domWindow.Event(type, { bubbles: true, cancelable: true });
-    Object.defineProperties(event, { code: { value: code }, repeat: { value: false } });
+    Object.defineProperties(event, { code: { value: code }, repeat: { value: false }, ...Object.fromEntries(Object.entries(properties).map(([name,value]) => [name,{value}])) });
     document.dispatchEvent(event);
+    return event;
   };
   assert.equal(renderers.length, 1); frame();
   await until(() => sockets[0]?.connected, 'real frontend WebSocket connection', frame);
@@ -143,6 +145,17 @@ test('game entry connects real menu, lobby, movement, shop, equipment and render
   click('resume-game');
   await until(() => document.pointerLockElement === renderers[0].domElement, 'mouse capture', frame);
   assert.equal(visible('overlay-pause'), false);
+
+  key('KeyC');
+  await until(() => player.crouch, 'C crouches the authoritative body', frame);
+  key('KeyC','keyup');
+  await until(() => !player.crouch, 'releasing C stands the body up', frame);
+  key('ControlLeft');
+  const controlW=key('KeyW','keydown',{ctrlKey:true});
+  assert.equal(controlW.defaultPrevented,true,'game requests cancellation of the browser Ctrl+W shortcut while pointer locked');
+  await until(() => player.crouch && player.vz < 0,'Ctrl+W still moves while crouched',frame);
+  key('KeyW','keyup'); key('ControlLeft','keyup');
+  await until(() => !player.crouch,'released Ctrl does not leave crouch stuck',frame);
 
   const initialZ = player.z;
   key('KeyW');
@@ -165,8 +178,8 @@ test('game entry connects real menu, lobby, movement, shop, equipment and render
   await sleep(120); frame();
   assert.equal(visible('overlay-buy'), false, 'new snapshots do not reopen the dismissed shop');
   key('Digit3');
-  await until(() => player.weapon === 'smoke', 'actual equip action', frame);
-  await sleep(80); frame(); assert.equal($('weapon-name').textContent, 'SMOKE');
+  await until(() => player.weapon === 'knife', 'actual knife equip action', frame);
+  await sleep(80); frame(); assert.equal($('weapon-name').textContent, WEAPONS.knife.name);
   key('Digit2');
   await until(() => player.weapon === 'glock', 'pistol equip action', frame);
   assert.ok(renderers[0].frames > 5);
@@ -175,4 +188,24 @@ test('game entry connects real menu, lobby, movement, shop, equipment and render
   document.exitPointerLock(); click('pause-leave');
   await until(() => server.rooms.size === 0 && visible('screen-menu'), 'leave button cleans room', frame);
   frame(); assert.equal(visible('overlay-buy'), false);
+
+  // Exercise the social menu against a second real client, including consent
+  // and the actual server's roomCode presence field used by the JOIN button.
+  const peer=io(url,{reconnection:false,transports:['websocket']}); sockets.push(peer);
+  await until(() => peer.connected,'second real social client',frame);
+  const peerRoom=await peer.timeout(2000).emitWithAck('room:create',{nickname:'Amigo da Rede'});
+  assert.equal(peerRoom.ok,true);
+  const peerProfile=(await peer.timeout(2000).emitWithAck('profile:get',{})).profile;
+  click('main-friends');
+  $('friend-code').value=peerProfile.id;
+  $('friend-form').dispatchEvent(new domWindow.Event('submit',{bubbles:true,cancelable:true}));
+  await until(() => server.profiles.get(peerProfile.id).requests.includes(client.__network.profile.id),'UI sends friend request to server',frame);
+  const accepted=await peer.timeout(2000).emitWithAck('friend:accept',{code:client.__network.profile.id});
+  assert.equal(accepted.ok,true);
+  await until(() => [...$('friend-list').querySelectorAll('button')].some(button => button.textContent==='ENTRAR' && !button.disabled),'accepted online friend exposes an enabled room join button',frame);
+  const joinButton=[...$('friend-list').querySelectorAll('button')].find(button => button.textContent==='ENTRAR');
+  joinButton.dispatchEvent(new domWindow.Event('click',{bubbles:true}));
+  await until(() => visible('screen-lobby') && client.__network.code===peerRoom.code,'friend button joins the actual friend room',frame);
+  assert.equal(server.rooms.get(peerRoom.code).players.size,2);
+  assert.equal(errors.length,0,errors.map(values => values.join(' ')).join('\n'));
 });

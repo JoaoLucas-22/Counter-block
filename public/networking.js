@@ -2,7 +2,19 @@
 export class Networking extends EventTarget {
   constructor() {
     super();
-    this.socket = window.io({ autoConnect: true, transports: ['websocket', 'polling'], reconnectionDelay: 500, reconnectionDelayMax: 3000 });
+    let profileToken;
+    try { profileToken = localStorage.getItem('counter-block.profile-token') || undefined; } catch { /* Memory-only profile when storage is unavailable. */ }
+    this.socket = window.io({ autoConnect: true, auth:{profileToken}, transports: ['websocket', 'polling'], reconnectionDelay: 500, reconnectionDelayMax: 3000 });
+    this.profile = null;
+    this.socket.on('profile:state', profile => {
+      const {token,...safe} = profile;
+      if (token) {
+        this.socket.auth = { ...this.socket.auth, profileToken:token };
+        try { localStorage.setItem('counter-block.profile-token',token); } catch { /* Keep this socket's credentials in memory. */ }
+      }
+      this.profile = safe;
+      this.dispatch('profile',safe);
+    });
     this.id = null;
     this.code = null;
     this.snapshots = [];
@@ -91,7 +103,7 @@ export class Networking extends EventTarget {
     const p = a.players.find(player => player.id === id);
     const q = b.players.find(player => player.id === id);
     if (!q) return p || null;
-    if (!p || a.round !== b.round || p.alive !== q.alive) return q;
+    if (!p || a.round !== b.round || a.mapId !== b.mapId || p.alive !== q.alive) return q;
     const t = a === b ? 1 : Math.max(0, Math.min(1, (target - a.serverTime) / (b.serverTime - a.serverTime)));
     let angle = ((q.yaw - p.yaw + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
     return { ...q, x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t, z: p.z + (q.z - p.z) * t, yaw: p.yaw + angle * t, pitch: p.pitch + (q.pitch - p.pitch) * t };

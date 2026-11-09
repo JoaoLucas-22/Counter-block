@@ -38,7 +38,7 @@ export function throwGrenade(room, player, item, now, emit = () => {}) {
   return g;
 }
 
-function moveGrenade(g, dt) {
+function moveGrenade(g, dt, map=MAP) {
   // Substeps keep fast projectiles from crossing narrow walls between ticks.
   const steps = Math.max(1, Math.ceil(Math.hypot(g.vx, g.vy, g.vz) * dt / 0.1));
   const delta = dt / steps;
@@ -47,7 +47,7 @@ function moveGrenade(g, dt) {
     for (const [axis, velocity] of [['x', 'vx'], ['y', 'vy'], ['z', 'vz']]) {
       const previous = g[axis];
       g[axis] += g[velocity] * delta;
-      if (MAP.solids.some(wall => overlaps(g, wall))) {
+      if (map.solids.some(wall => overlaps(g, wall))) {
         g[axis] = previous;
         g[velocity] *= -0.48;
         if (axis === 'y') { g.vx *= 0.82; g.vz *= 0.82; }
@@ -60,7 +60,7 @@ function moveGrenade(g, dt) {
       g.vz *= 0.9;
     }
     // Shared ramp metadata is optional; use its physical slope when present.
-    for (const ramp of MAP.ramps || []) {
+    for (const ramp of map.ramps || []) {
       if (g.x < ramp.x - ramp.w / 2 || g.x > ramp.x + ramp.w / 2
         || g.z < ramp.z - ramp.d / 2 || g.z > ramp.z + ramp.d / 2) continue;
       const axis = ramp.direction === 'x' ? 'x' : 'z';
@@ -88,7 +88,7 @@ function flashPlayers(room, g, emit) {
     const ray = distance > 0.001
       ? { x: offset.x / distance, y: offset.y / distance, z: offset.z / distance }
       : { x: 0, y: 0, z: -1 };
-    const obstacle = traceWorld(eye, ray, distance);
+    const obstacle = traceWorld(eye, ray, distance, room.map || MAP);
     if (typeof obstacle === 'number' && obstacle < distance - 0.16) continue;
     const aim = direction(player.yaw, player.pitch);
     const dot = aim.x * ray.x + aim.y * ray.y + aim.z * ray.z;
@@ -106,7 +106,7 @@ export function tickGrenades(room, dt, now, emit = () => {}) {
   if (!room.grenades?.length) return;
   for (const g of room.grenades) {
     if (g.active) continue;
-    moveGrenade(g, dt);
+    moveGrenade(g, dt, room.map || MAP);
     if (now < g.detonateAt) continue;
     g.active = true;
     g.vx = g.vy = g.vz = 0;

@@ -13,7 +13,8 @@ const finite = (v,fallback=0) => Number.isFinite(v) ? v : fallback;
 export const playerHeight = body => body.crouch ? CROUCH_HEIGHT : STAND_HEIGHT;
 export const eyeHeight = body => body.crouch ? 1.02 : 1.61;
 export function createBody(x=0,y=0,z=0) {
-  return { x:finite(x),y:finite(y),z:finite(z),vx:0,vy:0,vz:0,grounded:y<=0,crouch:false };
+  return { x:finite(x),y:finite(y),z:finite(z),vx:0,vy:0,vz:0,grounded:y<=0,crouch:false,
+    dashAvailable:true,dashTime:0,dashCooldown:0,dashHeld:false,crouchHeld:false,slideTime:0 };
 }
 export function direction(yaw=0,pitch=0) {
   const cp=Math.cos(pitch);
@@ -24,9 +25,9 @@ export function inZone(body,zone) {
 }
 
 /** Surface height at a point. Ramps use the same data for visuals and collision. */
-export function rampHeight(x,z) {
+export function rampHeight(x,z,map=MAP) {
   let result=0;
-  for (const r of MAP.ramps || []) {
+  for (const r of map.ramps || []) {
     if(Math.abs(x-r.x)>r.w/2+EPS || Math.abs(z-r.z)>r.d/2+EPS) continue;
     const t=r.direction==='x' ? (x-r.x)/r.w+.5 : (z-r.z)/r.d+.5;
     result=Math.max(result,r.height*(r.sign===-1 ? 1-t : t));
@@ -40,21 +41,21 @@ function overlapsHorizontal(x,z,b,radius=PLAYER_RADIUS) {
 function overlapsBody(x,y,z,height,b) {
   return overlapsHorizontal(x,z,b) && y<b.y+b.h/2-EPS && y+height>b.y-b.h/2+EPS;
 }
-function canOccupy(x,y,z,height) {
-  for(const b of MAP.solids) if(overlapsBody(x,y,z,height,b)) return false;
+function canOccupy(x,y,z,height,map) {
+  for(const b of map.solids) if(overlapsBody(x,y,z,height,b)) return false;
   return true;
 }
 function rampSurface(r,x,z) {
   const t=r.direction==='x' ? (x-r.x)/r.w+.5 : (z-r.z)/r.d+.5;
   return r.height*clamp(r.sign===-1 ? 1-t : t,0,1);
 }
-function moveAxis(body,axis,amount,height,mayStep) {
+function moveAxis(body,axis,amount,height,mayStep,map) {
   if(!amount) return;
   body[axis]+=amount;
-  for(const b of MAP.solids) {
+  for(const b of map.solids) {
     if(!overlapsBody(body.x,body.y,body.z,height,b)) continue;
     const top=b.y+b.h/2;
-    if(mayStep && top-body.y<=STEP_HEIGHT+EPS && top>=body.y-EPS && canOccupy(body.x,top,body.z,height)) {
+    if(mayStep && top-body.y<=STEP_HEIGHT+EPS && top>=body.y-EPS && canOccupy(body.x,top,body.z,height,map)) {
       body.y=top;
       continue;
     }
@@ -66,7 +67,7 @@ function moveAxis(body,axis,amount,height,mayStep) {
       body.vz=0;
     }
   }
-  for(const r of MAP.ramps || []) {
+  for(const r of map.ramps || []) {
     const b={x:r.x,z:r.z,w:r.w,d:r.d};
     if(!overlapsHorizontal(body.x,body.z,b)) continue;
     const surface=rampSurface(r,body.x,body.z);
@@ -81,9 +82,9 @@ function moveAxis(body,axis,amount,height,mayStep) {
     }
   }
 }
-function groundBelow(body,maxDrop) {
-  let support=rampHeight(body.x,body.z);
-  for(const b of MAP.solids) {
+function groundBelow(body,maxDrop,map) {
+  let support=rampHeight(body.x,body.z,map);
+  for(const b of map.solids) {
     const top=b.y+b.h/2;
     if(top<=body.y+EPS && top>=body.y-maxDrop-EPS && overlapsHorizontal(body.x,body.z,b)) support=Math.max(support,top);
   }
@@ -95,10 +96,19 @@ function groundBelow(body,maxDrop) {
  * clients cannot choose simulation duration. dt is bounded as a defensive fallback.
  * A feet-based AABB slides along walls and climbs only small, head-clear steps.
  */
-export function movePlayer(body,input={},dt=DT,speed=6) {
+export function movePlayer(body,input={},dt=DT,speed=6,map=MAP) {
   dt=clamp(finite(dt,DT),0,.05);
   if(dt===0) return body;
-  const standingClear=canOccupy(body.x,body.y,body.z,STAND_HEIGHT);
+  // Counters live in the shared body so reconciliation can replay exactly the
+  // same dash/slide state. Neither their duration nor velocity comes from input.
+  body.dashTime=Math.max(0,finite(body.dashTime)-dt);
+  body.dashCooldown=Math.max(0,finite(body.dashCooldown)-dt);
+  body.slideTime=Math.max(0,finite(body.slideTime)-dt);
+  if(body.dashAvailable===undefined) body.dashAvailable=true;
+  if(body.grounded) body.dashAvailable=true;
+  const crouchPressed=!!input.crouch && !body.crouchHeld;
+  body.crouchHeld=!!input.crouch;
+  const standingClear=canOccupy(body.x,body.y,body.z,STAND_HEIGHT,map);
   body.crouch=!!input.crouch || (!standingClear && !!body.crouch);
   const height=playerHeight(body);
   const yaw=finite(input.yaw);
@@ -112,15 +122,35 @@ export function movePlayer(body,input={},dt=DT,speed=6) {
   const dz=wishLength>EPS ? wz/wishLength : 0;
   const maxSpeed=clamp(finite(speed,6),1,8)*(body.crouch?.46:input.walk?.52:1);
   const jumping=!!input.jump && body.grounded;
-  if(jumping) {body.vy=6.2;body.grounded=false;}
+  const horizontalBefore=Math.hypot(body.vx,body.vz);
+  if(body.grounded && crouchPressed && horizontalBefore>4 && !jumping) {
+    body.slideTime=.35;
+    const boost=Math.min(9,Math.max(7.5,horizontalBefore*1.15))/horizontalBefore;
+    body.vx*=boost;body.vz*=boost;
+  }
+  if(!body.crouch) body.slideTime=0;
+  if(jumping) {body.vy=6.2;body.grounded=false;body.slideTime=0;}
+  // Space + crouch is transmitted as raw `dash`, independently of jump edges.
+  // A combo must be released before another activation, even across landing.
+  const dash=!!input.dash || (!!input.jump && !!input.crouch);
+  if(dash && !body.dashHeld && !body.grounded && body.dashAvailable && body.dashCooldown===0) {
+    let dashX=dx,dashZ=dz;
+    if(wishLength<EPS) {
+      dashX=horizontalBefore>EPS ? body.vx/horizontalBefore : -Math.sin(yaw);
+      dashZ=horizontalBefore>EPS ? body.vz/horizontalBefore : -Math.cos(yaw);
+    }
+    body.vx=dashX*13;body.vz=dashZ*13;
+    body.dashAvailable=false;body.dashTime=.18;body.dashCooldown=1.2;
+  }
+  body.dashHeld=dash;
   if(body.grounded) {
     const horizontal=Math.hypot(body.vx,body.vz);
     if(horizontal>EPS) {
-      const next=Math.max(0,horizontal-Math.max(1.5,horizontal)*7.5*dt);
+      const next=Math.max(0,horizontal-Math.max(1.5,horizontal)*(body.slideTime>0?2.5:7.5)*dt);
       body.vx*=next/horizontal; body.vz*=next/horizontal;
     }
   }
-  if(wishLength>EPS) {
+  if(wishLength>EPS && body.dashTime===0) {
     // Air projection cap permits strafing without instant mid-air redirection.
     const wishSpeed=maxSpeed*Math.min(1,wishLength);
     const add=(body.grounded ? wishSpeed : Math.min(wishSpeed,1.8))-(body.vx*dx+body.vz*dz);
@@ -130,7 +160,7 @@ export function movePlayer(body,input={},dt=DT,speed=6) {
     }
   }
   const horizontal=Math.hypot(body.vx,body.vz);
-  const hardCap=Math.max(maxSpeed,8.5);
+  const hardCap=body.dashTime>0 ? 13 : body.slideTime>0 ? 9 : Math.max(maxSpeed,8.5);
   if(horizontal>hardCap) {body.vx*=hardCap/horizontal;body.vz*=hardCap/horizontal;}
   // Substeps prevent tunnelling if a bounded catch-up dt is used.
   const n=Math.max(1,Math.ceil(Math.max(Math.abs(body.vx),Math.abs(body.vz))*dt/.16));
@@ -138,16 +168,16 @@ export function movePlayer(body,input={},dt=DT,speed=6) {
   for(let i=0;i<n;i++) {
     const previousY=body.y;
     const wasGrounded=body.grounded;
-    moveAxis(body,'x',body.vx*sub,height,wasGrounded);
-    moveAxis(body,'z',body.vz*sub,height,wasGrounded);
+    moveAxis(body,'x',body.vx*sub,height,wasGrounded,map);
+    moveAxis(body,'z',body.vz*sub,height,wasGrounded,map);
     // Follow rising ramps while grounded, but never pull a jumping player down.
-    const ramp=rampHeight(body.x,body.z);
-    if(wasGrounded && ramp>body.y && ramp-body.y<=STEP_HEIGHT && canOccupy(body.x,ramp,body.z,height)) body.y=ramp;
+    const ramp=rampHeight(body.x,body.z,map);
+    if(wasGrounded && ramp>body.y && ramp-body.y<=STEP_HEIGHT && canOccupy(body.x,ramp,body.z,height,map)) body.y=ramp;
     body.vy-=GRAVITY*sub;
     const oldY=body.y;
     body.y+=body.vy*sub;
     body.grounded=false;
-    for(const b of MAP.solids) {
+    for(const b of map.solids) {
       if(!overlapsHorizontal(body.x,body.z,b)) continue;
       const top=b.y+b.h/2,bottom=b.y-b.h/2;
       if(body.vy<=0 && oldY>=top-EPS && body.y<top) {
@@ -156,12 +186,12 @@ export function movePlayer(body,input={},dt=DT,speed=6) {
         body.y=bottom-height;body.vy=0;
       }
     }
-    const floor=rampHeight(body.x,body.z);
+    const floor=rampHeight(body.x,body.z,map);
     if(body.y<=floor && oldY>=floor-STEP_HEIGHT && body.vy<=0) {
       body.y=floor;body.vy=0;body.grounded=true;
     }
     if(wasGrounded && body.vy<=0 && !body.grounded) {
-      const support=groundBelow(body,STEP_HEIGHT);
+      const support=groundBelow(body,STEP_HEIGHT,map);
       if(body.y-support<=STEP_HEIGHT && body.y>=support-EPS) {
         body.y=support;body.vy=0;body.grounded=true;
       }
@@ -170,6 +200,7 @@ export function movePlayer(body,input={},dt=DT,speed=6) {
     if(body.y<0) {body.y=0;body.vy=0;body.grounded=true;}
     if(!Number.isFinite(body.y)) body.y=previousY;
   }
+  if(body.grounded) {body.dashAvailable=true;body.dashTime=0;}
   return body;
 }
 
@@ -212,13 +243,13 @@ function rayRamp(origin,dir,r,maxDistance) {
   if(b>0) hi=Math.min(hi,t);else lo=Math.max(lo,t);
   return lo<=hi+EPS && lo<=maxDistance ? Math.max(0,lo) : null;
 }
-export function traceWorld(origin,dir,maxDistance=200) {
+export function traceWorld(origin,dir,maxDistance=200,map=MAP) {
   let nearest=maxDistance,result=null;
-  for(const box of MAP.solids) {
+  for(const box of map.solids) {
     const d=rayAABB(origin,dir,box,nearest);
     if(d!==null && d<=nearest) {nearest=d;result=d;}
   }
-  for(const ramp of MAP.ramps||[]) {
+  for(const ramp of map.ramps||[]) {
     const d=rayRamp(origin,dir,ramp,nearest);
     if(d!==null && d<=nearest) {nearest=d;result=d;}
   }

@@ -71,6 +71,10 @@ export class GameAudio {
     switch(type) {
       case 'shot': case 'fire': {
         const weapon=options.weapon || 'glock',suppressed=weapon==='usp',sniper=weapon==='awp';
+        if(weapon==='knife'){noise(.16,.22,1700,0,'bandpass');tone(240,.11,.045,0,90,'triangle');break;}
+        if(weapon==='scatter'){noise(.28,.95,2100);tone(75,.22,.42,0,35,'triangle');noise(.05,.13,3800,.19,'highpass');break;}
+        if(weapon==='vector'){noise(.075,.50,3400);tone(220,.07,.20,0,80,'triangle');break;}
+        if(weapon==='pulse'){noise(.10,.64,2900);tone(170,.1,.25,0,60,'triangle');break;}
         noise(sniper?.25:suppressed?.08:.15,suppressed?.19:.8,suppressed?1200:sniper?1700:2600);
         tone(sniper?95:suppressed?180:145,sniper?.22:.12,suppressed?.1:.36,0,45,'triangle');
         noise(.027,.12,5200,.045,'highpass');break;
@@ -93,6 +97,10 @@ export class GameAudio {
       case 'victory':[523,659,784,1047].forEach((freq,i)=>tone(freq,.23,.13,i*.11));break;
       case 'defeat':[440,370,294].forEach((freq,i)=>tone(freq,.25,.12,i*.16));break;
       case 'smoke':noise(.8,.24,2400);break;
+      case 'dash':noise(.22,.32,1100,0,'bandpass');tone(210,.18,.06,0,70,'triangle');break;
+      case 'slide':noise(.28,.20,700);break;
+      case 'crate':case 'case':noise(.08,.16,2200);[440,554,659,880].forEach((freq,i)=>tone(freq,.17,.10,.06+i*.08));break;
+      case 'drop':tone(660,.10,.09);tone(990,.18,.10,.11);break;
       default: tone(440,.07,.08);
     }
     if(!voice.count){bus.disconnect();panner?.disconnect();this.voices.delete(voice);}

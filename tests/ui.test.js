@@ -85,7 +85,7 @@ test('lobby renders safe nicknames, host, teams and every action callback', asyn
 test('settings clamp saved values, update actual controls and persist changes', async t => {
   const settings = {sensitivity: 500, fov: 1, master: -2, effects: 3, renderScale: 9, quality: 'invalid', showFPS: true};
   const {ui, calls, $, click, input, entries, window} = fixture(t, {'counter-block.settings': JSON.stringify(settings)});
-  assert.deepEqual(ui.settings, {sensitivity: 3, fov: 65, master: 0, effects: 1, renderScale: 1.5, quality: 'medium', showFPS: true, reducedFlash: false});
+  assert.deepEqual(ui.settings, {sensitivity: 3, fov: 65, master: 0, effects: 1, renderScale: 1.5, quality: 'medium', showFPS: true, reducedFlash: false, showNames: true});
   click('main-settings'); assert.equal(ui.modal, 'settings'); assert.ok(visible('overlay-settings'));
   input('setting-fov', '100'); input('setting-master', '.42'); input('setting-quality', 'low', 'change');
   $('setting-reducedFlash').checked = true; $('setting-reducedFlash').dispatchEvent(new window.Event('change'));
@@ -109,7 +109,7 @@ test('buy menu invokes category purchases and enforces displayed inventory, fund
   assert.ok(visible('overlay-buy')); assert.equal(ui.buyOpen, true);
   assert.equal($('buy-items').children.length, 1, 'only team pistol is offered'); assert.equal($('buy-items').firstElementChild.disabled, true, 'owned pistol is disabled');
   const category = name => document.querySelector(`[data-category="${name}"]`).dispatchEvent(new window.Event('click'));
-  category('primary'); assert.equal($('buy-items').children.length, 2);
+  category('primary'); assert.equal($('buy-items').children.length, 5, 'team rifle, AWP, Vector, Scatter and Pulse are offered');
   const ak = [...$('buy-items').children].find(button => button.textContent.includes('AK-47'));
   assert.equal(ak.disabled, false); ak.dispatchEvent(new window.Event('click')); await flush();
   assert.deepEqual(calls.at(-1), ['buy', 'ak']);

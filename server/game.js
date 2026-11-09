@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { CONFIG } from '../shared/config.js';
-import { MAP } from '../shared/map-data.js';
+import { MAPS, getMap } from '../shared/map-data.js';
 import { WEAPONS, EQUIPMENT } from '../shared/weapons.js';
 import { createBody, movePlayer, eyeHeight, direction, hitboxes, rayAABB, traceWorld, inZone } from '../shared/physics.js';
 import { throwGrenade, tickGrenades, serializeGrenades } from './grenades.js';
 
-const NEUTRAL = Object.freeze({forward:0,strafe:0,yaw:0,pitch:0,jump:false,walk:false,crouch:false,fire:false,interact:false});
+const NEUTRAL = Object.freeze({forward:0,strafe:0,yaw:0,pitch:0,jump:false,walk:false,crouch:false,dash:false,fire:false,interact:false});
 const dist = (a,b) => Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
 const money = (p,amount,config) => { p.money=Math.max(0,Math.min(config.maxMoney,p.money+amount)); };
 export class RuleError extends Error {}
@@ -14,7 +14,7 @@ const requireRule = (condition,message) => { if(!condition) throw new RuleError(
 export function newPlayer(nickname,socketId,config) {
   return {...createBody(),id:randomUUID(),token:randomUUID()+randomUUID(),nickname,socketId,connected:true,ready:false,team:'T',
     alive:false,hp:100,armor:0,helmet:false,kit:false,money:config.initialMoney,kills:0,deaths:0,assists:0,ping:0,
-    yaw:0,pitch:0,weapon:'glock',inventory:['glock'],ammo:{glock:{mag:WEAPONS.glock.mag,reserve:WEAPONS.glock.reserve}},
+    yaw:0,pitch:0,weapon:'glock',inventory:['glock','knife'],ammo:{knife:{mag:0,reserve:0},glock:{mag:WEAPONS.glock.mag,reserve:WEAPONS.glock.reserve}},
     ack:0,lastSeq:0,inputQueue:[],input:{...NEUTRAL},lastInputAt:0,fireHeld:false,nextShotAt:0,lastShotAt:0,
     spray:0,recoilVertical:0,recoilHorizontal:0,reloadingAt:0,interaction:null,damageFrom:new Map(),scoped:false,burst:false,burstLeft:0,
     disconnectedAt:0,footstepAt:0,jumpHeld:false};
@@ -22,7 +22,8 @@ export function newPlayer(nickname,socketId,config) {
 
 /** All mutations run on the single Node event loop. Inputs never contain positions or damage. */
 export class GameRoom {
-  constructor(code,{config={},emit=()=>{},onEmpty=()=>{}}={}) {
+  constructor(code,{config={},emit=()=>{},onEmpty=()=>{},onKill=()=>{}}={}) {
+    this.map=getMap('dust');this.onKill=onKill;
     this.code=code; this.config={...CONFIG,...config}; this.players=new Map(); this.host=null;
     this.phase='lobby'; this.round=0; this.score={T:0,CT:0}; this.roundEndsAt=0; this.buyEndsAt=0;
     this.winner=null; this.reason=''; this.nextRoundAt=0; this.bomb={state:'none',carrier:null,x:0,y:0,z:0};
@@ -38,6 +39,12 @@ export class GameRoom {
     return p;
   }
   countTeams(){const counts={T:0,CT:0};for(const p of this.players.values()) counts[p.team]++;return counts;}
+  selectMap(mapId) {
+    requireRule(this.phase==='lobby','Escolha o mapa antes de iniciar.');
+    requireRule(typeof mapId==='string'&&Object.hasOwn(MAPS,mapId),'Mapa inválido.');
+    this.map=getMap(mapId);
+    for(const player of this.players.values())player.ready=false;
+  }
   selectTeam(p,team) {
     requireRule(this.phase==='lobby','Troque de equipe no lobby.');
     requireRule(team==='T'||team==='CT','Equipe inválida.');
@@ -66,9 +73,9 @@ export class GameRoom {
     const spawnIndex={T:0,CT:0};this.startedTeamCounts={T:0,CT:0};
     for(const p of this.players.values()) {
       if(!p.connected){p.alive=false;continue;}
-      const survived=p.alive; const spawn=MAP.spawns[p.team][spawnIndex[p.team]++%MAP.spawns[p.team].length];
+      const survived=p.alive; const spawn=this.map.spawns[p.team][spawnIndex[p.team]++%this.map.spawns[p.team].length];
       Object.assign(p,createBody(spawn.x,spawn.y,spawn.z));p.yaw=spawn.yaw;p.pitch=0;p.alive=true;p.hp=100;
-      if(!survived){const pistol=p.team==='T'?'glock':'usp';p.inventory=[pistol];p.weapon=pistol;p.ammo={[pistol]:{mag:WEAPONS[pistol].mag,reserve:WEAPONS[pistol].reserve}};p.armor=0;p.helmet=false;p.kit=false;}
+      if(!survived){const pistol=p.team==='T'?'glock':'usp';p.inventory=[pistol,'knife'];p.weapon=pistol;p.ammo={[pistol]:{mag:WEAPONS[pistol].mag,reserve:WEAPONS[pistol].reserve}};p.armor=0;p.helmet=false;p.kit=false;}
       // Surviving weapons persist; all owned firearms receive round-start ammunition.
       for(const id of p.inventory){const weapon=WEAPONS[id];if(weapon)p.ammo[id]={mag:weapon.mag,reserve:weapon.reserve};}
       p.inputQueue=[];p.input={...NEUTRAL,yaw:p.yaw};p.lastInputAt=now;p.fireHeld=false;p.reloadingAt=0;p.interaction=null;
@@ -92,14 +99,14 @@ export class GameRoom {
   dropBomb(p,now) {
     requireRule(this.phase==='playing'&&this.bomb.state==='carried'&&this.bomb.carrier===p.id,'Você não está carregando a bomba.');
     const origin={x:p.x,y:p.y+.12,z:p.z};
-    const down=traceWorld(origin,{x:0,y:-1,z:0},100)??origin.y;
+    const down=traceWorld(origin,{x:0,y:-1,z:0},100,this.map)??origin.y;
     this.bomb={...this.bomb,state:'dropped',carrier:null,x:p.x,y:Math.max(.06,origin.y-down+.06),z:p.z,pickupAfter:now+800};p.interaction=null;
     this.emit({type:'bomb',action:'drop',player:p.id,x:p.x,y:p.y,z:p.z});
   }
   buy(p,item,now) {
     requireRule(this.phase==='playing'&&p.alive&&p.connected,'Você precisa estar vivo para comprar.');
     requireRule(now<=this.buyEndsAt,'O período de compra terminou.');
-    requireRule(inZone(p,MAP.buyZones[p.team]),'Volte à área de compra.');
+    requireRule(inZone(p,this.map.buyZones[p.team]),'Volte à área de compra.');
     requireRule(typeof item==='string'&&(Object.hasOwn(WEAPONS,item)||Object.hasOwn(EQUIPMENT,item)),'Item inválido.');
     const definition=Object.hasOwn(WEAPONS,item)?WEAPONS[item]:EQUIPMENT[item];
     requireRule(definition.team==='both'||definition.team===p.team,'Este item não está disponível para sua equipe.');
@@ -116,7 +123,7 @@ export class GameRoom {
   }
   equip(p,weapon,slot) {
     requireRule(this.phase==='playing'&&p.alive,'Você precisa estar vivo para equipar.');
-    if(slot!==undefined){requireRule(Number.isInteger(slot)&&slot>=1&&slot<=3,'Slot inválido.');if(slot===1) weapon=p.inventory.find(id=>WEAPONS[id]?.slot==='primary');if(slot===2) weapon=p.inventory.find(id=>WEAPONS[id]?.slot==='secondary');if(slot===3) weapon=p.inventory.find(id=>id==='smoke'||id==='flash');}
+    if(slot!==undefined){requireRule(Number.isInteger(slot)&&slot>=1&&slot<=3,'Slot inválido.');if(slot===1) weapon=p.inventory.find(id=>WEAPONS[id]?.slot==='primary');if(slot===2) weapon=p.inventory.find(id=>WEAPONS[id]?.slot==='secondary');if(slot===3) weapon=p.inventory.find(id=>WEAPONS[id]?.melee);}
     requireRule(typeof weapon==='string'&&p.inventory.includes(weapon),'Equipamento indisponível.');
     if(weapon===p.weapon) return;
     p.weapon=weapon;p.reloadingAt=0;p.scoped=false;p.burstLeft=0;p.nextShotAt=Math.max(p.nextShotAt,this.lastTickAt+180);p.spray=0;p.recoilVertical=0;p.recoilHorizontal=0;
@@ -157,7 +164,7 @@ export class GameRoom {
     if(!Number.isFinite(command.forward)||Math.abs(command.forward)>1||!Number.isFinite(command.strafe)||Math.abs(command.strafe)>1)return false;
     const input={seq,time:Number.isFinite(command.time)?Math.max(now-1000,Math.min(now,command.time)):now,
       forward:command.forward,strafe:command.strafe,yaw:((command.yaw+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI,
-      pitch:Math.max(-1.5,Math.min(1.5,command.pitch)),jump:command.jump===true,walk:command.walk===true,crouch:command.crouch===true,fire:command.fire===true,interact:command.interact===true};
+      pitch:Math.max(-1.5,Math.min(1.5,command.pitch)),jump:command.jump===true,walk:command.walk===true,crouch:command.crouch===true,dash:command.dash===true,fire:command.fire===true,interact:command.interact===true};
     p.lastSeq=seq;p.lastInputAt=now;
     // Limit queue latency: dropping excess commands never adds simulation time.
     if(p.inputQueue.length>=8)p.inputQueue.shift();p.inputQueue.push(input);return true;
@@ -169,34 +176,44 @@ export class GameRoom {
   fire(p,now,forcedBurst=false) {
     if(this.phase!=='playing'||!p.alive||p.reloadingAt||now<p.nextShotAt)return false;
     if(p.weapon==='smoke'||p.weapon==='flash'){this.throwUtility(p,p.weapon,now);return true;}
-    const w=WEAPONS[p.weapon],ammo=p.ammo[p.weapon];if(!w||!ammo||ammo.mag<=0)return false;
+    const w=WEAPONS[p.weapon],ammo=p.ammo[p.weapon];
+    if(!w||(!w.melee&&(!ammo||ammo.mag<=0))){p.burstLeft=0;return false;}
+    if(!forcedBurst&&p.burstLeft>0)return false;
     if(now-p.lastShotAt>350){p.spray=0;p.recoilVertical=0;p.recoilHorizontal=0;}
     const recoil=w.recoil[Math.min(p.spray,w.recoil.length-1)];
     p.recoilVertical=Math.min(.22,p.recoilVertical+recoil[0]);p.recoilHorizontal=Math.max(-.12,Math.min(.12,p.recoilHorizontal+recoil[1]));p.spray++;
     const moving=Math.min(1,Math.hypot(p.vx,p.vz)/w.speed);
     const spread=(p.scoped&&w.scopedSpread!==undefined?w.scopedSpread:w.spread)+(w.moveSpread*moving)+(p.grounded?0:w.airSpread);
-    const yaw=p.yaw+p.recoilHorizontal+(Math.random()-.5)*spread*2;
-    const pitch=Math.max(-1.55,Math.min(1.55,p.pitch+p.recoilVertical+(Math.random()-.5)*spread*2));
-    const origin={x:p.x,y:p.y+eyeHeight(p),z:p.z};const dir=direction(yaw,pitch);
-    let closest=traceWorld(origin,dir,200)??200;let victim=null,region=null;
+    const origin={x:p.x,y:p.y+eyeHeight(p),z:p.z};
     const maxRewind=Math.min(this.config.maxRewind*1000,(p.ping||0)/2+50);
     const targetAt=now-Math.max(0,Math.min(maxRewind,now-(p.input.time??now)));
-    for(const target of this.players.values()){
-      if(target.id===p.id||!target.alive||!target.connected||(!this.config.friendlyFire&&target.team===p.team))continue;
-      const pose=this.rewindPlayer(target,targetAt);
-      for(const hitbox of hitboxes(pose)){
-        const distance=rayAABB(origin,dir,hitbox.box,closest);
-        if(distance!==null&&distance<closest){closest=distance;victim=target;region=hitbox.region;}
+    const hits=[];const traces=[];
+    for(let pellet=0;pellet<(w.pellets??1);pellet++){
+      const yaw=p.yaw+p.recoilHorizontal+(Math.random()-.5)*spread*2;
+      const pitch=Math.max(-1.55,Math.min(1.55,p.pitch+p.recoilVertical+(Math.random()-.5)*spread*2));
+      const dir=direction(yaw,pitch),range=w.range??200;
+      let closest=traceWorld(origin,dir,range,this.map)??range;let victim=null,region=null;
+      for(const target of this.players.values()){
+        if(target.id===p.id||!target.alive||!target.connected||(!this.config.friendlyFire&&target.team===p.team))continue;
+        const pose=this.rewindPlayer(target,targetAt);
+        for(const hitbox of hitboxes(pose)){
+          const distance=rayAABB(origin,dir,hitbox.box,closest);
+          if(distance!==null&&distance<closest){closest=distance;victim=target;region=hitbox.region;}
+        }
       }
+      const end={x:origin.x+dir.x*closest,y:origin.y+dir.y*closest,z:origin.z+dir.z*closest};
+      traces.push({direction:dir,end});
+      if(victim)hits.push({victim,region,damage:w.damage*(this.config.hitMultipliers[region]??1)});
     }
-    ammo.mag--;p.lastShotAt=now;
-    if(p.weapon==='glock'&&p.burst){
-      if(!forcedBurst)p.burstLeft=2;else p.burstLeft=Math.max(0,p.burstLeft-1);
-      p.nextShotAt=now+(p.burstLeft>0?65:450);
-    } else p.nextShotAt=now+w.rate*1000;
-    const end={x:origin.x+dir.x*closest,y:origin.y+dir.y*closest,z:origin.z+dir.z*closest};
-    this.emit({type:'shot',shooter:p.id,weapon:p.weapon,origin,direction:dir,end,recoil});
-    if(victim){const multiplier=this.config.hitMultipliers[region]??1;this.applyDamage(p,victim,w.damage*multiplier,region,now);}
+    if(!w.melee)ammo.mag--;
+    p.lastShotAt=now;
+    const burstCount=w.burstCount??(p.weapon==='glock'&&p.burst?3:1);
+    if(burstCount>1){
+      p.burstLeft=forcedBurst?Math.max(0,p.burstLeft-1):burstCount-1;
+      p.nextShotAt=now+(p.burstLeft>0?(w.burstInterval??.065)*1000:(p.weapon==='glock'?450:w.rate*1000));
+    }else p.nextShotAt=now+w.rate*1000;
+    this.emit({type:'shot',shooter:p.id,weapon:p.weapon,origin,direction:traces[0].direction,end:traces[0].end,recoil,...(traces.length>1?{traces}:{})});
+    for(const hit of hits){if(this.phase!=='playing')break;this.applyDamage(p,hit.victim,hit.damage,hit.region,now);}
     return true;
   }
   applyDamage(attacker,target,amount,region,now) {
@@ -213,6 +230,7 @@ export class GameRoom {
       const assist=[];for(const [id,record] of target.damageFrom){const p=this.players.get(id);if(p&&id!==attacker.id&&record.damage>=30&&now-record.time<10000){p.assists++;money(p,150,this.config);assist.push(id);}}
       if(this.bomb.carrier===target.id&&this.bomb.state==='carried')this.dropBomb(target,now);
       target.inputQueue=[];target.interaction=null;target.reloadingAt=0;target.vx=0;target.vy=0;target.vz=0;
+      this.onKill(attacker,target);
       this.emit({type:'kill',attacker:attacker.id,target:target.id,weapon:attacker.weapon,headshot:region==='head',assist});
       this.checkElimination(now);
     }
@@ -232,11 +250,11 @@ export class GameRoom {
     let type=null,site=null,duration=0;
     const still=Math.hypot(p.vx,p.vz)<.55&&p.grounded;
     if(p.input.interact&&still&&p.team==='T'&&this.bomb.state==='carried'&&this.bomb.carrier===p.id){
-      site=Object.keys(MAP.sites).find(key=>inZone(p,MAP.sites[key]));if(site){type='plant';duration=this.config.plantTime*1000;}
+      site=Object.keys(this.map.sites).find(key=>inZone(p,this.map.sites[key]));if(site){type='plant';duration=this.config.plantTime*1000;}
     } else if(p.input.interact&&still&&p.team==='CT'&&this.bomb.state==='planted'&&dist(p,this.bomb)<2.4){
       const origin={x:p.x,y:p.y+eyeHeight(p),z:p.z},length=dist(origin,this.bomb);
       const dir={x:(this.bomb.x-origin.x)/length,y:(this.bomb.y-origin.y)/length,z:(this.bomb.z-origin.z)/length};
-      const wall=traceWorld(origin,dir,length);if(wall===null||wall>=length-.2){type='defuse';duration=(p.kit?this.config.kitDefuseTime:this.config.defuseTime)*1000;}
+      const wall=traceWorld(origin,dir,length,this.map);if(wall===null||wall>=length-.2){type='defuse';duration=(p.kit?this.config.kitDefuseTime:this.config.defuseTime)*1000;}
     }
     if(!type){p.interaction=null;return;}
     if(p.interaction?.type!==type||p.interaction?.site!==site)p.interaction={type,site,start:now,progress:0};
@@ -272,7 +290,7 @@ export class GameRoom {
       else if(now-p.lastInputAt>200)p.input={...NEUTRAL,yaw:p.yaw,pitch:p.pitch};
       if(p.reloadingAt&&now>=p.reloadingAt){const a=p.ammo[p.weapon],w=WEAPONS[p.weapon];if(a&&w){const transfer=Math.min(w.mag-a.mag,a.reserve);a.mag+=transfer;a.reserve-=transfer;}p.reloadingAt=0;}
       const beforeGrounded=p.grounded;const jumping=p.input.jump&&!p.jumpHeld;
-      movePlayer(p,{...p.input,jump:jumping},dt,(WEAPONS[p.weapon]?.speed??6)*(p.scoped?.72:1));p.jumpHeld=p.input.jump;
+      movePlayer(p,{...p.input,jump:jumping},dt,(WEAPONS[p.weapon]?.speed??6)*(p.scoped?.72:1),this.map);p.jumpHeld=p.input.jump;
       if(beforeGrounded&&!p.grounded&&p.vy>0)this.emit({type:'jump',player:p.id,x:p.x,y:p.y,z:p.z});
       if(p.grounded&&Math.hypot(p.vx,p.vz)>1.2&&!p.input.walk&&!p.crouch&&now>=p.footstepAt){p.footstepAt=now+340;this.emit({type:'footstep',player:p.id,x:p.x,y:p.y,z:p.z});}
       p.recoilVertical*=Math.exp(-dt*7);p.recoilHorizontal*=Math.exp(-dt*6);
@@ -289,11 +307,11 @@ export class GameRoom {
     this.checkElimination(now);
   }
   snapshot(now) {
-    const players=[];for(const p of this.players.values())players.push({id:p.id,nickname:p.nickname,team:p.team,connected:p.connected,ready:p.ready,alive:p.alive,
-      x:p.x,y:p.y,z:p.z,vx:p.vx,vy:p.vy,vz:p.vz,yaw:p.yaw,pitch:p.pitch,crouch:p.crouch,walk:p.input.walk,grounded:p.grounded,hp:p.hp,armor:p.armor,helmet:p.helmet,kit:p.kit,money:p.money,kills:p.kills,deaths:p.deaths,assists:p.assists,ping:p.ping,
+    const players=[];for(const p of this.players.values())players.push({id:p.id,profileId:p.profileId??null,cosmetics:{...(p.cosmetics??{weapon:'default',character:'default'})},nickname:p.nickname,team:p.team,connected:p.connected,ready:p.ready,alive:p.alive,
+      x:p.x,y:p.y,z:p.z,vx:p.vx,vy:p.vy,vz:p.vz,yaw:p.yaw,pitch:p.pitch,crouch:p.crouch,walk:p.input.walk,dashAvailable:p.dashAvailable,dashTime:p.dashTime,dashCooldown:p.dashCooldown,dashHeld:p.dashHeld,crouchHeld:p.crouchHeld,slideTime:p.slideTime,grounded:p.grounded,hp:p.hp,armor:p.armor,helmet:p.helmet,kit:p.kit,money:p.money,kills:p.kills,deaths:p.deaths,assists:p.assists,ping:p.ping,
       weapon:p.weapon,inventory:[...p.inventory],ammo:Object.fromEntries(Object.entries(p.ammo).map(([id,a])=>[id,{...a}])),ack:p.ack,scoped:p.scoped,burst:p.burst,reloadingAt:p.reloadingAt,
       interaction:p.interaction?{type:p.interaction.type,site:p.interaction.site,progress:p.interaction.progress}:null});
     const bomb={...this.bomb};delete bomb.pickupAfter;
-    return {serverTime:now,code:this.code,host:this.host,phase:this.phase,round:this.round,score:{...this.score},roundEndsAt:this.roundEndsAt,buyEndsAt:this.buyEndsAt,nextRoundAt:this.nextRoundAt,winner:this.winner,reason:this.reason,bomb,players,grenades:serializeGrenades(this),config:{maxRounds:this.config.maxRounds,swapAfter:this.config.swapAfter,buyTime:this.config.buyTime}};
+    return {serverTime:now,code:this.code,mapId:this.map.id??'dust',mapName:this.map.name,host:this.host,phase:this.phase,round:this.round,score:{...this.score},roundEndsAt:this.roundEndsAt,buyEndsAt:this.buyEndsAt,nextRoundAt:this.nextRoundAt,winner:this.winner,reason:this.reason,bomb,players,grenades:serializeGrenades(this),config:{maxRounds:this.config.maxRounds,swapAfter:this.config.swapAfter,buyTime:this.config.buyTime}};
   }
 }

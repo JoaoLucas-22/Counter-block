@@ -5,7 +5,8 @@ import { buildMap } from './map.js';
 import { createCharacter } from './player.js';
 import { createViewWeapon } from './weapons.js';
 import { GameAudio } from './audio.js';
-import { MAP } from '/shared/map-data.js';
+import { MAP, getMap } from '/shared/map-data.js';
+import { movementInput, blockGameShortcut, captureGameKeyboard } from './controls.js';
 import { WEAPONS } from '/shared/weapons.js';
 import { DT, movePlayer, eyeHeight, traceWorld } from '/shared/physics.js';
 
@@ -26,6 +27,7 @@ let flashUntil = 0, flashIntensity = 0, damageUntil = 0;
 let spectatorIndex = 0, lastVisualTime = performance.now(), frameCount = 0, fpsTime = 0, fps = 0;
 let footstep = 0, lastGrounded = true, lastPhase = 'menu', displayEye = 1.61;
 let preferences, nextHud = 0, lastFeedback = 0;
+let activeMap = MAP;
 const predictedShots = [];
 const correction = new THREE.Vector3();
 const remoteSteps = new Map();
@@ -42,6 +44,18 @@ const ui = new UI({
   restart: () => task(() => network.request('match:restart')),
   buy: item => task(() => network.action('buy', { item })),
   settings: applySettings,
+  selectMap: mapId => task(() => network.request('room:map',{mapId})),
+  openCrate: type => task(async () => { await network.request('profile:open',{type}); audio.unlock(); audio.play('crate'); }),
+  equipSkin: (kind,skinId) => task(() => network.request('profile:equip',{kind,skinId})),
+  friendRequest: code => task(async () => { await network.request('friend:request',{code}); ui.toast('Solicitação de amizade enviada.'); }),
+  friendAccept: code => task(async () => { await network.request('friend:accept',{code}); ui.toast('Amizade aceita. Vocês já podem entrar na mesma sala.'); }),
+  friendRemove: code => task(async () => { await network.request('friend:remove',{code}); ui.toast('Amizade removida.'); }),
+  friendJoin: code => task(async () => {
+    const destination = await network.request('friend:join',{code});
+    if (network.code) await leaveRoom();
+    await network.join(destination.code,ui.nickname || network.profile?.nickname || 'Jogador');
+  }),
+  fullscreen: () => task(toggleFullscreen),
 });
 preferences = ui.settings;
 async function task(action) {
@@ -77,10 +91,35 @@ function requestPointer() {
   if (!renderer) return ui.toast('WebGL indisponível. Ative aceleração de hardware no navegador.');
   if (!state || state.phase === 'lobby') return;
   audio.unlock();
+  captureGameKeyboard();
   if (state.phase === 'finished') return;
   buyOpen = false; ui.showBuy(false);
   const promise = renderer.domElement.requestPointerLock?.();
   if (promise?.catch) promise.catch(() => ui.toast('Clique em Retomar para ativar o mouse.'));
+}
+async function toggleFullscreen() {
+  if (document.fullscreenElement) {
+    await document.exitFullscreen?.();
+    navigator.keyboard?.unlock?.();
+    return;
+  }
+  if (!document.documentElement.requestFullscreen) return ui.toast('Use F11 e C para agachar neste navegador.');
+  await document.documentElement.requestFullscreen();
+  const captured = await captureGameKeyboard();
+  ui.toast(captured ? 'Teclado capturado. Esc libera os controles.' : 'Tela cheia ativa. Use C para agachar sem atalhos do navegador.');
+}
+function useMap(id) {
+  const map = getMap(id);
+  if (map.id === activeMap.id) return;
+  activeMap = map;
+  pending.length = 0; predicted = null; network.snapshots.length = 0;
+  for (const effect of smokeEffects.values()) disposeSmoke(effect);
+  smokeEffects.clear();
+  for (const visual of grenadeVisuals.values()) scene?.remove(visual.mesh);
+  grenadeVisuals.clear();
+  for (const trace of traces) { scene?.remove(trace.line); trace.line.geometry.dispose(); }
+  traces.length = 0;
+  if (scene) { world?.dispose(); world = buildMap(scene,preferences.quality,map); }
 }
 function applySettings(settings = ui.settings) {
   preferences = settings;
@@ -96,7 +135,7 @@ function applySettings(settings = ui.settings) {
 function initGraphics() {
   try {
     scene = new THREE.Scene();
-    camera = new THREE.PerspectiveCamera(90, innerWidth / innerHeight, .055, 180);
+    camera = new THREE.PerspectiveCamera(90, innerWidth / innerHeight, .055, 260);
     camera.rotation.order = 'YXZ';
     renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.setSize(innerWidth, innerHeight);
@@ -105,7 +144,7 @@ function initGraphics() {
     renderer.toneMappingExposure = 1.15;
     document.getElementById('viewport').append(renderer.domElement);
     scene.add(camera);
-    world = buildMap(scene, ui.settings.quality);
+    world = buildMap(scene, ui.settings.quality,activeMap);
     viewWeapon = createViewWeapon(camera);
     viewWeapon.setVisible(false);
     applySettings();
@@ -127,19 +166,23 @@ network.on('connection', status => {
 });
 network.on('failure', message => { ui.toast(message); leaveRoom(); });
 network.on('resumed', () => ui.toast('Conexão recuperada. Sua sessão foi restaurada.'));
+network.on('profile', profile => ui.updateProfile(profile));
 network.on('entered', session => {
   seq = session.inputSeq; pending.length = 0; predicted = null; lastRound = -1;
   keys.clear(); leftMouse = false; jumpHeld = false; correction.set(0,0,0);
 });
 network.on('room', next => {
   if (!next) return;
+  useMap(next.mapId);
   state = next; me = next.players?.find(p => p.id === network.id) || null;
   if (next.phase === 'lobby') {
-    ui.showPause(false); ui.showScreen('lobby'); lastPhase = 'lobby';
+    if (ui.screen !== 'lobby') { ui.showPause(false); ui.showScreen('lobby'); }
+    lastPhase = 'lobby';
     ui.updateRoom(next, network.id);
   }
 });
 network.on('snapshot', next => {
+  useMap(next.mapId);
   const previous = me;
   state = next;
   me = next.players.find(player => player.id === network.id) || null;
@@ -165,11 +208,13 @@ network.on('snapshot', next => {
     displayEye = eyeHeight(me);
   }
   const before = predicted ? {x:predicted.x,y:predicted.y,z:predicted.z} : null;
-  predicted = { x:me.x, y:me.y, z:me.z, vx:me.vx, vy:me.vy, vz:me.vz, crouch:me.crouch, grounded:me.grounded };
+  predicted = { x:me.x, y:me.y, z:me.z, vx:me.vx, vy:me.vy, vz:me.vz, crouch:me.crouch, grounded:me.grounded,
+    dashAvailable:me.dashAvailable, dashTime:me.dashTime, dashCooldown:me.dashCooldown,
+    dashHeld:me.dashHeld, crouchHeld:me.crouchHeld, slideTime:me.slideTime };
   pending = pending.filter(input => input.seq > (me.ack ?? 0));
   if (me.alive && next.phase === 'playing') {
     const speed = (WEAPONS[me.weapon]?.speed ?? 6) * (me.scoped ? .72 : 1);
-    for (const command of pending) movePlayer(predicted, { ...command, jump: command.jumpPressed }, DT, speed);
+    for (const command of pending) movePlayer(predicted, { ...command, jump: command.jumpPressed }, DT, speed,activeMap);
   }
   if (!reset && before && Math.hypot(before.x-predicted.x,before.y-predicted.y,before.z-predicted.z)<.65) {
     correction.x += before.x-predicted.x; correction.y += before.y-predicted.y; correction.z += before.z-predicted.z;
@@ -183,7 +228,7 @@ network.on('snapshot', next => {
   for (const [id, model] of models) if (!next.players.some(p => p.id === id)) {
     scene?.remove(model.group); model.dispose(); models.delete(id); remoteSteps.delete(id);
   }
-  viewWeapon?.equip(me.weapon);
+  viewWeapon?.equip(me.weapon,me.cosmetics?.weapon);
   if (next.phase === 'finished') { document.exitPointerLock?.(); ui.showPause(false); }
   updateSmoke(next.grenades || []);
   updateProjectiles(next.grenades || []);
@@ -217,6 +262,9 @@ network.on('event', event => {
     case 'kill':
       ui.feed(event);
       if (event.target === network.id) { leftMouse = false; ui.toast('Eliminado. Espectador: use as setas para trocar de aliado.'); }
+      break;
+    case 'case':
+      if (event.player === network.id || event.profileId === network.profile?.id) { audio.play('drop'); ui.toast('Eliminação! Uma caixa gratuita chegou à sua coleção.'); }
       break;
     case 'reload':
       audio.play('reload', event.player === network.id ? {} : at);
@@ -256,31 +304,31 @@ function fixedTick() {
   const active = locked && !buyOpen && me.alive && state.phase === 'playing';
   const command = {
     seq: ++seq, time:network.now(), yaw, pitch,
-    forward:active ? Number(keys.has('KeyW')) - Number(keys.has('KeyS')) : 0,
-    strafe:active ? Number(keys.has('KeyD')) - Number(keys.has('KeyA')) : 0,
-    jump:active && keys.has('Space'), walk:active && (keys.has('ShiftLeft') || keys.has('ShiftRight')),
-    crouch:active && (keys.has('ControlLeft') || keys.has('ControlRight')),
-    fire:active && leftMouse, interact:active && keys.has('KeyE'),
+    ...movementInput(keys,active), fire:active && leftMouse,
   };
   command.jumpPressed = command.jump && !jumpHeld;
   jumpHeld = command.jump;
   network.input(command);
   pending.push(command);
   if (pending.length > 120) pending.shift();
-  movePlayer(predicted, { ...command, jump: command.jumpPressed }, DT, (WEAPONS[me.weapon]?.speed ?? 6) * (me.scoped ? .72 : 1));
+  const dashBefore = predicted.dashTime || 0;
+  movePlayer(predicted, { ...command, jump: command.jumpPressed }, DT, (WEAPONS[me.weapon]?.speed ?? 6) * (me.scoped ? .72 : 1),activeMap);
+  if (predicted.dashTime > dashBefore) audio.play('dash');
   if (!predicted.grounded && lastGrounded && command.jump) audio.play('jump');
   lastGrounded = predicted.grounded;
   const now = performance.now();
   recoilPitch *= Math.exp(-DT*7); recoilYaw *= Math.exp(-DT*6);
   if (now-lastFeedback>350) { spray = 0; recoilPitch = recoilYaw = 0; }
-  if (command.fire && (WEAPONS[me.weapon]?.automatic || !shotHeld) && now >= nextShot && !me.reloadingAt && me.ammo?.[me.weapon]?.mag > 0) {
+  if (command.fire && (WEAPONS[me.weapon]?.automatic || !shotHeld) && now >= nextShot && !me.reloadingAt && (WEAPONS[me.weapon]?.melee || me.ammo?.[me.weapon]?.mag > 0)) {
     const weapon = WEAPONS[me.weapon];
     if (weapon) {
       const kick = weapon.recoil[Math.min(spray, weapon.recoil.length - 1)];
       shotFeedback(me.weapon,kick);
       predictedShots.push({weapon:me.weapon,at:now});
       if (predictedShots.length>20) predictedShots.shift();
-      nextShot = now + (me.weapon==='glock' && me.burst ? 580 : weapon.rate*1000);
+      const burstCount = weapon.burstCount ?? (me.weapon==='glock' && me.burst ? 3 : 1);
+      const recovery = me.weapon==='glock' && me.burst ? .45 : weapon.rate;
+      nextShot = now + (recovery+(burstCount-1)*(weapon.burstInterval ?? .065))*1000;
     }
   }
   shotHeld = command.fire;
@@ -326,8 +374,9 @@ document.addEventListener('mousedown', event => {
 document.addEventListener('mouseup', event => { if (event.button === 0) leftMouse = false; });
 document.addEventListener('contextmenu', event => { if (locked) event.preventDefault(); });
 document.addEventListener('keydown', event => {
-  if (event.defaultPrevented || ['settings','controls'].includes(ui.modal)) return;
   const editing = ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName);
+  blockGameShortcut(event,locked,editing);
+  if (['settings','controls','friends','collection'].includes(ui.modal)) return;
   if (editing || !state || state.phase === 'lobby') return;
   if (event.code === 'Tab') { event.preventDefault(); scoreOpen = true; ui.showScore(true, state); }
   if (event.code === 'Space' || event.code.startsWith('Arrow')) event.preventDefault();
@@ -335,6 +384,7 @@ document.addEventListener('keydown', event => {
   if (event.repeat) return;
   if (!me?.alive && ['ArrowRight','ArrowLeft'].includes(event.code)) spectatorIndex += event.code === 'ArrowRight' ? 1 : -1;
   if (event.code === 'Escape') {
+    if (locked) document.exitPointerLock?.();
     if (buyOpen) { buyOpen = false; ui.showBuy(false); ui.showPause(true); }
     else if (!locked && state.phase !== 'finished') ui.showPause(true);
     return;
@@ -367,12 +417,15 @@ window.addEventListener('resize', () => {
 
 const traceMaterial = new THREE.LineBasicMaterial({ color:0xffdc87, transparent:true, opacity:.65 });
 function addTrace(event) {
-  if (!event.origin || !event.end || traces.length >= 24) return;
-  const geometry = new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(event.origin.x,event.origin.y,event.origin.z), new THREE.Vector3(event.end.x,event.end.y,event.end.z),
-  ]);
-  const line = new THREE.Line(geometry, traceMaterial); scene.add(line);
-  traces.push({ line, until:performance.now() + 80 });
+  if (!event.origin) return;
+  for (const ray of event.traces || [event]) {
+    if (!ray.end || traces.length>=24) break;
+    const geometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(event.origin.x,event.origin.y,event.origin.z), new THREE.Vector3(ray.end.x,ray.end.y,ray.end.z),
+    ]);
+    const line = new THREE.Line(geometry, traceMaterial); scene.add(line);
+    traces.push({ line, until:performance.now() + 80 });
+  }
 }
 const smokeGeometry = new THREE.IcosahedronGeometry(1, 1);
 const smokeTransform = new THREE.Object3D();
@@ -437,14 +490,16 @@ smokeVeil.style.cssText = 'position:fixed;inset:0;background:#adb2af;opacity:0;z
 document.body.append(smokeVeil);
 function drawRadar() {
   if (!radarContext || !me) return;
-  const ctx = radarContext, scale = 2.2, center = 85;
-  const x = value => center + value * scale, z = value => center + value * scale;
+  const bounds = activeMap.bounds;
+  const ctx = radarContext, scale = 150/Math.max(bounds.maxX-bounds.minX,bounds.maxZ-bounds.minZ), center = 85;
+  const x = value => center + (value-(bounds.maxX+bounds.minX)/2) * scale;
+  const z = value => center + (value-(bounds.maxZ+bounds.minZ)/2) * scale;
   ctx.clearRect(0,0,170,170);
   ctx.save(); ctx.beginPath(); ctx.arc(85,85,83,0,Math.PI * 2); ctx.clip();
   ctx.fillStyle = '#71858a55';
-  for (const b of MAP.solids) ctx.fillRect(x(b.x-b.w/2),z(b.z-b.d/2),b.w*scale,b.d*scale);
+  for (const b of activeMap.solids) ctx.fillRect(x(b.x-b.w/2),z(b.z-b.d/2),b.w*scale,b.d*scale);
   ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.fillStyle = '#ed9d5d';
-  for (const [name,site] of Object.entries(MAP.sites)) ctx.fillText(name,x(site.x),z(site.z));
+  for (const [name,site] of Object.entries(activeMap.sites)) ctx.fillText(name,x(site.x),z(site.z));
   for (const player of state.players) {
     if (!player.alive || (player.team !== me.team && player.id !== me.id)) continue;
     const body = player.id === me.id ? predicted : player;
@@ -481,7 +536,7 @@ function render(now) {
     scope.style.display = scoped ? '' : 'none';
     viewWeapon.setVisible(me.alive && !scoped && state.phase !== 'finished');
     const speed = Math.hypot(predicted.vx,predicted.vz);
-    viewWeapon.update(dt,{ speed,grounded:predicted.grounded,crouch:predicted.crouch,aim:scoped,time:now/1000 });
+    viewWeapon.update(dt,{ speed,grounded:predicted.grounded,crouch:predicted.crouch,aim:scoped,time:now/1000,dashTime:predicted.dashTime,slideTime:predicted.slideTime });
     audio.setListener(camera.position.x,camera.position.y,camera.position.z,camera.rotation.y);
     const quiet = keys.has('ShiftLeft') || keys.has('ShiftRight') || predicted.crouch;
     if (me.alive && predicted.grounded && speed>1 && !quiet && now>footstep) { audio.play('step'); footstep = now + Math.max(280,420-speed*15); }
@@ -491,11 +546,16 @@ function render(now) {
       model.update(p,now/1000,dt);
       model.group.visible = p.connected && id !== viewed.id;
       const distance = Math.hypot(p.x-camera.position.x,p.z-camera.position.z);
-      const to = { x:p.x-camera.position.x,y:p.y+1.7-camera.position.y,z:p.z-camera.position.z };
+      const to = { x:p.x-camera.position.x,y:p.y+eyeHeight(p)-camera.position.y,z:p.z-camera.position.z };
       const length = Math.hypot(to.x,to.y,to.z);
-      const wall = length > .01 ? traceWorld(camera.position,{x:to.x/length,y:to.y/length,z:to.z/length},length) : null;
-      const smoky = [...smokeEffects.values()].some(effect => effect.group.position.distanceTo(camera.position)<4 || Math.hypot(p.x-effect.group.position.x,p.z-effect.group.position.z)<4);
-      model.setLabelVisible(p.team === me.team && p.alive && distance<25 && wall===null && !smoky);
+      const wall = length > .01 ? traceWorld(camera.position,{x:to.x/length,y:to.y/length,z:to.z/length},length,activeMap) : null;
+      let smoky = false;
+      for (const effect of smokeEffects.values()) {
+        const center = effect.group.position;
+        const t = length>.001 ? Math.max(0,Math.min(1,((center.x-camera.position.x)*to.x+(center.y+1.5-camera.position.y)*to.y+(center.z-camera.position.z)*to.z)/(length*length))) : 0;
+        if (Math.hypot(camera.position.x+to.x*t-center.x,camera.position.y+to.y*t-center.y-1.5,camera.position.z+to.z*t-center.z)<4.2) { smoky=true; break; }
+      }
+      model.setLabelVisible(preferences.showNames !== false && p.alive && distance<40 && wall===null && !smoky);
       if (p.alive && p.grounded && !p.walk && !p.crouch && Math.hypot(p.vx,p.vz)>1 && distance<25 && now>(remoteSteps.get(id)||0)) {
         audio.play('step',{x:p.x,y:p.y,z:p.z,volume:.6}); remoteSteps.set(id,now+370);
       }
@@ -518,13 +578,14 @@ function render(now) {
       crosshair.style.visibility = me.alive && !scoped && !buyOpen ? 'visible' : 'hidden';
     }
     if (now>nextHud) {
-      ui.updateHUD(state,me,{fps,ping:network.ping,speed,now:network.now(),spectating:viewed !== me ? viewed.nickname : null});
+      ui.updateHUD(state,me,{fps,ping:network.ping,speed,now:network.now(),dashCooldown:predicted.dashCooldown,dashAvailable:predicted.dashAvailable,spectating:viewed !== me ? viewed.nickname : null});
       drawRadar(); nextHud = now+75;
     }
   } else {
     scope.style.display = 'none'; bombGroup.visible = false; viewWeapon.setVisible(false);
     const t = now*.000025;
-    camera.position.set(Math.cos(t)*48,38,Math.sin(t)*48+7); camera.lookAt(lookAt);
+    const radius = (activeMap.bounds.maxX-activeMap.bounds.minX)*.75;
+    camera.position.set(Math.cos(t)*radius,radius*.8,Math.sin(t)*radius+7); camera.lookAt(lookAt);
     for (const model of models.values()) model.group.visible = false;
   }
   const flash = document.getElementById('flash');

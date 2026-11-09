@@ -32,6 +32,29 @@ export const WEAPONS = Object.freeze({
     reload: 3.4, spread: 0.020, scopedSpread: 0.0002, moveSpread: 0.055, airSpread: 0.15,
     recoil: [[0.065,0.005]], speed: 5.1, killReward: 100,
   },
+  vector: {
+    id:'vector', name:'Vector-9', slot:'primary', team:'both', price:1200,
+    damage:19, rate:.065, automatic:true, mag:32, reserve:128,
+    reload:1.9, spread:.0025, moveSpread:.018, airSpread:.07,
+    recoil:[[.008,.001],[.011,-.002],[.013,.003],[.014,-.004]], speed:6.5, killReward:350,
+  },
+  scatter: {
+    id:'scatter', name:'Scatter-8', slot:'primary', team:'both', price:1600,
+    damage:12, pellets:8, rate:.8, automatic:false, mag:8, reserve:32,
+    reload:2.7, spread:.05, moveSpread:.012, airSpread:.035,
+    recoil:[[.042,.005]], speed:5.9, killReward:450,
+  },
+  pulse: {
+    id:'pulse', name:'Pulse-3', slot:'primary', team:'both', price:2200,
+    damage:27, rate:.5, automatic:false, burstCount:3, burstInterval:.075,
+    mag:27, reserve:108, reload:2.1, spread:.0014, moveSpread:.026, airSpread:.08,
+    recoil:[[.012,.001],[.016,-.002],[.019,.003]], speed:6, killReward:300,
+  },
+  knife: {
+    id:'knife', name:'Faca Block', slot:'melee', team:'both', price:0, melee:true, range:2.2,
+    damage:45, rate:.48, automatic:false, mag:0, reserve:0, reload:0,
+    spread:0, moveSpread:0, airSpread:0, recoil:[[0,0]], speed:6.8, killReward:500,
+  },
 });
 export const EQUIPMENT = Object.freeze({
   armor: { id:'armor', name:'Colete', price:650, team:'both' },

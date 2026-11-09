@@ -34,17 +34,23 @@ class FakeSocket {
 }
 
 /** Exercises the actual transport wrapper without claiming a browser or WebGL run. */
-function fixture(t, stored = null) {
+function fixture(t, stored = null, profileToken = null) {
   const socket = new FakeSocket();
   const entries = new Map(stored === null ? [] : [['counter-block-session', stored]]);
+  const profileEntries = new Map(profileToken ? [['counter-block.profile-token',profileToken]] : []);
   const timers = [];
-  const originals = new Map(['window', 'sessionStorage', 'setInterval', 'clearInterval'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const originals = new Map(['window', 'sessionStorage', 'localStorage', 'setInterval', 'clearInterval'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   let ioOptions;
   globalThis.window = { io: options => { ioOptions = options; return socket; } };
   globalThis.sessionStorage = {
     getItem: key => entries.get(key) ?? null,
     setItem: (key, value) => entries.set(key, String(value)),
     removeItem: key => entries.delete(key),
+  };
+  globalThis.localStorage = {
+    getItem:key => profileEntries.get(key) ?? null,
+    setItem:(key,value) => profileEntries.set(key,String(value)),
+    removeItem:key => profileEntries.delete(key),
   };
   globalThis.setInterval = (callback, ms) => { const timer = { callback, ms, cleared: false }; timers.push(timer); return timer; };
   globalThis.clearInterval = timer => { timer.cleared = true; };
@@ -56,7 +62,7 @@ function fixture(t, stored = null) {
       else delete globalThis[key];
     }
   });
-  return { net, socket, entries, timers, get ioOptions() { return ioOptions; } };
+  return { net, socket, entries, profileEntries, timers, get ioOptions() { return ioOptions; } };
 }
 
 const auth = (overrides = {}) => ({ ok: true, id: 'local-player', token: 'private-token', code: 'ABCDE',
@@ -229,4 +235,23 @@ test('HTML module entry, import map and relative client import targets resolve l
   }
   assert.ok([...visited].some(path => path.endsWith('/networking.js')));
   assert.ok([...visited].some(path => path.endsWith('/shared/physics.js')));
+});
+
+
+test('profile credentials authenticate reconnects but stay out of the UI state and match session', async t => {
+  const f=fixture(t,null,'old-private-profile-token'), profiles=[];
+  f.net.on('profile',profile => profiles.push(profile));
+  assert.equal(f.ioOptions.auth.profileToken,'old-private-profile-token');
+  const state={id:'ABCDEFGH',nickname:'Amigo',token:'new-private-profile-token',friends:[],requests:[],crates:{weapon:1,character:0},owned:['default'],equipped:{weapon:'default',character:'default'},lastDrop:null};
+  await f.socket.receive('profile:state',state);
+  assert.equal(f.profileEntries.get('counter-block.profile-token'),'new-private-profile-token');
+  assert.equal(f.socket.auth.profileToken,'new-private-profile-token');
+  assert.equal(f.net.profile.id,'ABCDEFGH');
+  assert.equal(Object.hasOwn(f.net.profile,'token'),false);
+  assert.equal(Object.hasOwn(profiles[0],'token'),false);
+  assert.equal(f.entries.has('counter-block-session'),false);
+  await f.socket.receive('profile:state',{...f.net.profile,crates:{weapon:0,character:0}});
+  assert.equal(f.socket.auth.profileToken,'new-private-profile-token','incremental updates do not erase the private credential');
+  await f.net.leave();
+  assert.equal(f.profileEntries.get('counter-block.profile-token'),'new-private-profile-token','leaving a match retains profile ownership');
 });

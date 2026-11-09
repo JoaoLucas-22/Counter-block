@@ -41,23 +41,30 @@ function rampGeometry(ramp) {
   geometry.computeVertexNormals();return geometry;
 }
 
-export function buildMap(scene,quality='medium') {
-  const root=new THREE.Group();root.name='Dust Block';scene.add(root);
+export function buildMap(scene,quality='medium',map=MAP) {
+  const root=new THREE.Group();root.name=map.name;scene.add(root);
   const ownedTextures=[],ownedMaterials=new Set(),ownedGeometries=new Set();
+  const width=map.bounds.maxX-map.bounds.minX,depth=map.bounds.maxZ-map.bounds.minZ;
+  const cx=(map.bounds.minX+map.bounds.maxX)/2,cz=(map.bounds.minZ+map.bounds.maxZ)/2;
+  const extent=Math.max(width,depth);
+  const defaults=map.id==='yard' ? {sky:0x8cabc9,ground:0x748497,wall:0x465f78,building:0x617e95,crate:0xb35a86,trim:0x273b55,accent:0x55f5e0,sun:0xe2eaff}
+    : map.id==='depot' ? {sky:0xb5cfde,ground:0x82899b,wall:0x66657d,building:0xc4ccd9,crate:0x507e98,trim:0x37465d,accent:0xd2ee70,sun:0xf5edff}
+    : {sky:0xb9d3da,ground:0xd7c49c,wall:0xd9c9a5,building:0xe1cfaa,crate:0x8a6a43,trim:0xa78b62,accent:0xb77544,sun:0xffedcc};
+  const palette={...defaults,...(typeof map.theme==='object'?map.theme:{})};
   const material=(parameters)=>{const value=new THREE.MeshStandardMaterial(parameters);ownedMaterials.add(value);return value;};
   const sand=sandTexture(),stone=blockTexture();ownedTextures.push(sand,stone);
   const materials={
-    wall:material({color:0xd9c9a5,map:stone,roughness:.98}),
-    boundary:material({color:0xc5b18a,map:stone,roughness:1}),
-    building:material({color:0xe1cfaa,map:stone,roughness:.94}),
-    crate:material({color:0x8a6a43,roughness:.94}),
-    trim:material({color:0xa78b62,roughness:.96}),
+    wall:material({color:palette.wall,map:stone,roughness:.98}),
+    boundary:material({color:palette.wall,map:stone,roughness:1}),
+    building:material({color:palette.building,map:stone,roughness:.94}),
+    crate:material({color:palette.crate,roughness:.94}),
+    trim:material({color:palette.trim,roughness:.96}),
     black:material({color:0x3d443e,roughness:.85}),
     wood:material({color:0x74644d,roughness:.97}),
     plaster:material({color:0xe5d9bb,roughness:1}),
     blue:material({color:0x407c8e,roughness:.85}),
-    orange:material({color:0xb77544,roughness:.92}),
-    ground:material({color:0xd7c49c,map:sand,roughness:1}),
+    orange:material({color:palette.accent,roughness:.92}),
+    ground:material({color:palette.ground,map:sand,roughness:1}),
     platform:material({color:0xb8ac90,roughness:1}),
   };
   const boxGeometry=new THREE.BoxGeometry(1,1,1);ownedGeometries.add(boxGeometry);
@@ -68,10 +75,10 @@ export function buildMap(scene,quality='medium') {
     if(!decorativeBatches.has(mat))decorativeBatches.set(mat,[]);
     decorativeBatches.get(mat).push([x,y,z,w,h,d]);
   };
-  box(0,-.16,0,66,.3,66,materials.ground);
+  box(cx,-.16,cz,width+2,.3,depth+2,materials.ground);
   // Every solid rendered below is the same centre AABB used by server physics and rays.
   const batches=new Map();
-  for(const solid of MAP.solids){const key=solid.kind==='pillar'||solid.kind==='arch'?'plaster':solid.kind==='step'?'platform':solid.kind;
+  for(const solid of map.solids){const key=solid.kind==='pillar'||solid.kind==='arch'?'plaster':solid.kind==='step'?'platform':solid.kind;
     if(!batches.has(key))batches.set(key,[]);batches.get(key).push(solid);}
   const transform=new THREE.Object3D();
   for(const [kind,solids] of batches){
@@ -79,9 +86,9 @@ export function buildMap(scene,quality='medium') {
     solids.forEach((solid,i)=>{transform.position.set(solid.x,solid.y,solid.z);transform.scale.set(solid.w,solid.h,solid.d);transform.updateMatrix();mesh.setMatrixAt(i,transform.matrix);});
     mesh.castShadow=true;mesh.receiveShadow=true;mesh.computeBoundingSphere();root.add(mesh);
   }
-  for(const ramp of MAP.ramps||[]){const geometry=rampGeometry(ramp);ownedGeometries.add(geometry);
+  for(const ramp of map.ramps||[]){const geometry=rampGeometry(ramp);ownedGeometries.add(geometry);
     const mesh=new THREE.Mesh(geometry,materials.platform);mesh.position.set(ramp.x,0,ramp.z);mesh.receiveShadow=true;mesh.castShadow=true;root.add(mesh);}
-  for(const s of MAP.solids){
+  for(const s of map.solids){
     if(s.kind==='building'){
       const top=s.y+s.h/2;
       box(s.x,top-.07,s.z,s.w+.10,.14,s.d+.10,materials.trim);
@@ -128,11 +135,11 @@ export function buildMap(scene,quality='medium') {
     const mat=new THREE.MeshBasicMaterial({map:texture,transparent:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2});ownedMaterials.add(mat);
     const mesh=new THREE.Mesh(planeGeometry,mat);mesh.rotation.x=-Math.PI/2;mesh.position.set(x,y,z);mesh.scale.set(size,size,1);root.add(mesh);
   };
-  for(const label of MAP.labels||[]) {
-    if(label.text==='A')floorLabel('A',-25,.915,-18,3.5,label.color);
+  for(const label of map.labels||[]) {
+    if((!map.id||map.id==='dust')&&label.text==='A')floorLabel('A',-25,.915,-18,3.5,label.color);
     else floorLabel(label.text,label.x,label.y,label.z,label.text.length>2?8:4,label.color);
   }
-  for(const [siteName,zone] of Object.entries(MAP.sites)){
+  for(const [siteName,zone] of Object.entries(map.sites)){
     // Mark actual planting bounds on the ground; raised site A also has a readable emblem.
     const color=materials.orange;
     box(zone.x,.012,zone.z-zone.d/2,zone.w,.018,.10,color);
@@ -146,12 +153,19 @@ export function buildMap(scene,quality='medium') {
     const mat=new THREE.MeshBasicMaterial({map:texture});ownedMaterials.add(mat);
     const mesh=new THREE.Mesh(planeGeometry,mat);mesh.position.set(x,y,z);mesh.scale.set(2.2,2.2,1);mesh.rotation.y=rotation;root.add(mesh);
   };
+  if(!map.id||map.id==='dust'){
   sign('A ←',-12,2.8,16.02,0);sign('B →',12,2.8,16.02,0);sign('MID',0,4.25,-20.985,0);
   floorLabel('← A',-24,.018,15,6,'#bc8855');floorLabel('B →',24,.018,14,6,'#bc8855');
   // Decorative arch profile is above the same solid lintel, clear of the player opening.
   const archPoints=[];for(let i=0;i<=16;i++){const angle=Math.PI-i/16*Math.PI;archPoints.push(new THREE.Vector3(Math.cos(angle)*4.8,Math.sin(angle)*1.7+4.85,-22));}
   const archGeometry=new THREE.TubeGeometry(new THREE.CatmullRomCurve3(archPoints),24,.16,5,false);ownedGeometries.add(archGeometry);
   const archMesh=new THREE.Mesh(archGeometry,materials.trim);archMesh.castShadow=true;root.add(archMesh);
+  }
+  // Upper boundary trim and roof beacons are cosmetic and stay out of the routes.
+  if(map.id&&map.id!=='dust') for(const solid of map.solids){
+    if(solid.kind==='boundary')box(solid.x,solid.y+solid.h/2-.12,solid.z,solid.w,.14,solid.d,materials.orange);
+    if(solid.kind==='building')box(solid.x,solid.y+solid.h/2+.07,solid.z,solid.w*.72,.12,.20,materials.orange);
+  }
   for(const [mat,boxes] of decorativeBatches) {
     const mesh=new THREE.InstancedMesh(boxGeometry,mat,boxes.length);
     for(let i=0;i<boxes.length;i++) {
@@ -160,13 +174,13 @@ export function buildMap(scene,quality='medium') {
     }
     mesh.castShadow=true;mesh.receiveShadow=true;mesh.computeBoundingSphere();root.add(mesh);
   }
-  const ambient=new THREE.HemisphereLight(0xe0f1fa,0x846d46,2.0);root.add(ambient);
-  const sunlight=new THREE.DirectionalLight(0xffedcc,2.8);sunlight.position.set(-24,44,20);sunlight.target.position.set(0,0,-4);root.add(sunlight,sunlight.target);
-  sunlight.shadow.camera.left=-42;sunlight.shadow.camera.right=42;sunlight.shadow.camera.top=42;sunlight.shadow.camera.bottom=-42;
-  sunlight.shadow.camera.near=1;sunlight.shadow.camera.far=110;sunlight.shadow.bias=-.0005;sunlight.shadow.normalBias=.025;
-  scene.background=new THREE.Color(0xb9d3da);scene.fog=new THREE.Fog(0xb9d3da,42,112);
+  const ambient=new THREE.HemisphereLight(palette.sky,map.id==='dust'?0x846d46:0x33425c,2.0);root.add(ambient);
+  const sunlight=new THREE.DirectionalLight(palette.sun,2.8);sunlight.position.set(-24,44,20);sunlight.target.position.set(0,0,-4);root.add(sunlight,sunlight.target);
+  sunlight.shadow.camera.left=-extent*.65;sunlight.shadow.camera.right=extent*.65;sunlight.shadow.camera.top=extent*.65;sunlight.shadow.camera.bottom=-extent*.65;
+  sunlight.shadow.camera.near=1;sunlight.shadow.camera.far=extent*2;sunlight.shadow.bias=-.0005;sunlight.shadow.normalBias=.025;
+  scene.background=new THREE.Color(palette.sky);scene.fog=new THREE.Fog(palette.sky,extent*.7,extent*1.8);
   const dustGeometry=new THREE.BufferGeometry(),dustPositions=new Float32Array(72*3);
-  for(let i=0;i<72;i++){dustPositions[i*3]=((i*31)%63)-31;dustPositions[i*3+1]=.3+((i*17)%21)/10;dustPositions[i*3+2]=((i*47)%63)-31;}
+  for(let i=0;i<72;i++){dustPositions[i*3]=cx+((i*31)%(width-1))-width/2;dustPositions[i*3+1]=.3+((i*17)%21)/10;dustPositions[i*3+2]=cz+((i*47)%(depth-1))-depth/2;}
   dustGeometry.setAttribute('position',new THREE.BufferAttribute(dustPositions,3));ownedGeometries.add(dustGeometry);
   const dustMaterial=new THREE.PointsMaterial({color:0xffe3aa,size:.035,transparent:true,opacity:.22,depthWrite:false});ownedMaterials.add(dustMaterial);
   const dust=new THREE.Points(dustGeometry,dustMaterial);root.add(dust);
