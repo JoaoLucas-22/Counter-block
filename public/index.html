@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111615">
+  <meta name="description" content="Counter Block. Um FPS tático multiplayer original, direto no navegador.">
+  <title>Counter Block — Arenas</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath fill='%23ef8a46' d='M8 8h48v48H8z'/%3E%3Cpath fill='%23111615' d='M20 18h25v8H28v12h17v8H20z'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/style.css">
+  <script type="importmap">{"imports":{"three":"/vendor/three.module.js"}}</script>
+</head>
+<body>
+  <div id="viewport" aria-label="Cenário 3D de Counter Block"></div>
+  <div class="vignette"></div>
+  <div id="interface">
+    <header class="shell-header" id="shell-header">
+      <a class="brand" href="#" id="brand-home" aria-label="Menu principal">
+        <svg class="brand-symbol" viewBox="0 0 40 40" aria-hidden="true"><path d="M4 4h13v7h-6v18h6v7H4zm32 0H23v7h6v5h-6v7h6v6h-6v7h13z" fill="currentColor"/></svg>
+        <span>COUNTER<span class="brand-slash">//</span>BLOCK<small>ARENAS MULTIPLAYER</small></span>
+      </a>
+      <nav class="top-nav" aria-label="Navegação principal"><button class="nav-button active" data-screen="menu">VISÃO GERAL</button><button class="nav-button" id="nav-controls">COMO JOGAR</button></nav>
+      <div class="connection"><span class="connection-dot" id="connection-dot"></span><span id="connection-text">CONECTANDO</span><span class="build">BUILD 0.2</span></div>
+    </header>
+
+    <main>
+      <section id="screen-menu" class="screen menu-screen">
+        <div class="menu-content">
+          <div class="eyebrow"><span class="short-line"></span> ARENAS · MOVIMENTO · EQUIPE</div>
+          <h1>MOVIMENTO.<br>MIRA.<br><span>VITÓRIA.</span></h1>
+          <p class="hero-description">Junte seus amigos. Encontre seu estilo.<br>Novas arenas, armas e cosméticos para conquistar.</p>
+          <div class="hero-actions"><button class="button primary play-button" id="main-play"><span class="play-icon">▶</span><span>JOGAR AGORA<small>CRIE UMA SALA OU ENTRE COM SEUS AMIGOS</small></span><span class="button-arrow">↗</span></button></div>
+          <div class="secondary-actions"><button class="text-button" id="main-settings"><span>⚙</span> CONFIGURAÇÕES</button><span class="action-divider"></span><button class="text-button" id="main-controls"><span>⌘</span> CONTROLES</button></div>
+          <div class="profile-shortcuts"><button class="button secondary" id="main-friends">◉ AMIGOS <span id="friends-count">0</span></button><button class="button secondary" id="main-collection">◇ COLEÇÃO <span id="cases-count">0</span></button></div><div class="profile-identity">SEU CÓDIGO DE AMIGO <b id="menu-profile-code">CONECTANDO</b></div><div class="menu-footnote"><span class="online-light"></span> MULTIPLAYER REAL<em>SEM DOWNLOAD · DIRETO NO NAVEGADOR</em></div>
+        </div>
+        <aside class="map-feature">
+          <div class="map-feature-top"><span class="eyebrow">CAMPO DE OPERAÇÕES</span><span class="map-index">03 ARENAS</span></div>
+          <div class="map-title"><span>DUST BLOCK</span><span class="map-coordinate">24° N / 46° E</span></div>
+          <div class="map-meta"><span><i class="site-marker">A</i><i class="site-marker blue">B</i> BOMB DEFUSAL</span><span>ATÉ 10 JOGADORES</span></div>
+          <div class="map-feature-footer"><span>ARENAS ORIGINAIS. SEU PRÓPRIO ESTILO.</span><span class="map-cross">⌖</span></div>
+        </aside>
+        <div class="world-caption"><span class="coordinate-cross">+</span> DUST BLOCK <span>EXTERIOR / DIA</span></div>
+      </section>
+
+      <section id="screen-play" class="screen panel-screen hidden">
+        <div class="panel play-panel"><button class="back-button" data-back="menu">← MENU PRINCIPAL</button><div class="eyebrow">SEU TIME COMEÇA AQUI</div><h2>ENTRE NO JOGO<span>.</span></h2><p class="panel-copy">Convide seus amigos e disputem o próximo round.</p>
+          <label class="field-label" for="nickname">SEU NICKNAME</label><input id="nickname" type="text" placeholder="Escolha seu nome" maxlength="18" autocomplete="nickname" spellcheck="false"><small class="field-help">De 2 a 18 caracteres. Salvo neste navegador.</small>
+          <button id="create-room" class="button primary full"><span>CRIAR SALA</span><span>＋</span></button>
+          <div class="or-line"><span>OU ENTRE EM UMA SALA</span></div>
+          <form id="join-form" class="join-fields"><input id="room-code" type="text" placeholder="CÓDIGO" maxlength="5" minlength="5" pattern="[A-Za-z]{5}" autocomplete="off" aria-label="Código da sala"><button class="button secondary" type="submit">ENTRAR <span>→</span></button></form>
+          <div class="room-note"><span>◎</span><p>Compartilhe o código de 5 letras.<br>Até 5 jogadores em cada equipe.</p></div>
+        </div>
+      </section>
+
+      <section id="screen-lobby" class="screen panel-screen hidden">
+        <div class="panel lobby-panel"><div class="lobby-heading"><div><div class="eyebrow">SUA OPERAÇÃO</div><h2>PREPARAR. MIRAR<span>.</span></h2></div><button class="text-button" id="lobby-leave">SAIR DA SALA ↗</button></div>
+          <div class="lobby-code-row"><div><span class="field-label">CÓDIGO DA SALA</span><strong id="lobby-code">— — — — —</strong></div><button id="copy-code" class="button secondary">COPIAR CÓDIGO ⧉</button><span class="lobby-map"><b id="lobby-map-name">DUST BLOCK</b> <small>BOMB DEFUSAL · ATÉ 12 ROUNDS</small></span></div>
+          <div class="lobby-map-picker"><label for="map-select">ARENA DA PARTIDA</label><select id="map-select" aria-label="Selecionar arena"></select><span id="map-dimensions"></span></div><div class="team-grid"><div class="team-panel t-team"><div class="team-heading"><span class="team-badge">T</span><span>TERRORISTAS<small>PLANTE E PROTEJA</small></span><span class="team-count" id="count-t">0 / 5</span></div><div class="team-list" id="team-t"></div><button class="button team-button" id="join-t">ENTRAR NO TIME T →</button></div><div class="team-panel ct-team"><div class="team-heading"><span class="team-badge">CT</span><span>CONTRA-TERRORISTAS<small>PROTEJA E DESARME</small></span><span class="team-count" id="count-ct">0 / 5</span></div><div class="team-list" id="team-ct"></div><button class="button team-button" id="join-ct">ENTRAR NO TIME CT →</button></div></div>
+          <div class="lobby-footer"><p id="lobby-status">Escolha seu time e confirme que está pronto.</p><button class="button secondary" id="ready-button">ESTOU PRONTO ✓</button><button class="button primary" id="start-match">INICIAR PARTIDA →</button></div>
+        </div>
+      </section>
+
+      <section id="screen-game" class="screen game-screen hidden" aria-label="HUD da partida">
+        <div class="match-top"><div class="team-score t"><span>T</span><b id="score-t">0</b><small id="alive-t">0 VIVOS</small></div><div class="round-clock"><span id="round-label">ROUND 01</span><strong id="round-time">1:55</strong><small id="bomb-state">DUST BLOCK</small></div><div class="team-score ct"><small id="alive-ct">0 VIVOS</small><b id="score-ct">0</b><span>CT</span></div></div>
+        <div class="match-top-left"><span class="game-room">SALA <b id="game-code">—</b></span><span id="network-stats">— MS</span><span id="fps-display" class="hidden">— FPS</span><span id="location-label">DUST BLOCK</span><span id="dash-status">DASH PRONTO · ESPAÇO + C</span></div>
+        <div id="kill-feed" class="kill-feed" aria-live="polite"></div>
+        <div id="crosshair" class="crosshair"><i></i><i></i><i></i><i></i><b></b></div><div id="scope" class="scope hidden"><span></span></div>
+        <div class="interaction hidden" id="interaction"><span id="interaction-label">PLANTANDO</span><div><i id="interaction-fill"></i></div><small>SEGURE E PARA CONTINUAR</small></div>
+        <div class="center-message" id="center-message"></div>
+        <div class="spectator hidden" id="spectator"><b>VOCÊ ESTÁ ESPECTANDO</b><span>Aguarde o próximo round · Clique para trocar de jogador</span></div>
+        <div class="hud-bottom"><div class="vitals"><div class="health"><span class="hud-icon">＋</span><b id="health-value">100</b><small>VIDA</small></div><div class="armor"><span class="hud-icon">◇</span><b id="armor-value">0</b><small>COLETE</small></div></div><div class="hud-center"><span class="money" id="money-value">$ 800</span><span id="buy-hint"><kbd>B</kbd> COMPRAR</span><span id="bomb-carrier" class="hidden">◈ VOCÊ ESTÁ COM A BOMBA · G PARA SOLTAR</span></div><div class="weapon-hud"><div class="weapon-name" id="weapon-name">GLOCK-18</div><div class="ammo"><b id="ammo-value">20</b><span>/</span><small id="reserve-value">120</small></div><span id="reload-label">PRONTA</span></div></div>
+        <div class="equipment-bar" id="equipment-bar"><span>1 RIFLE</span><span>2 PISTOLA</span><span>3 FACA</span></div>
+        <div class="game-key-hint"><kbd>TAB</kbd> PLACAR <span>·</span> <kbd>ESC</kbd> MENU</div>
+        <div id="round-result" class="round-result hidden"><div class="eyebrow" id="result-eyebrow">ROUND ENCERRADO</div><h2 id="result-title">VITÓRIA T</h2><p id="result-reason"></p><button id="restart-match" class="button primary hidden">JOGAR NOVAMENTE →</button></div>
+      </section>
+    </main>
+
+    <footer class="shell-footer" id="shell-footer"><span><i class="tiny-square"></i> PRECISÃO. ESTRATÉGIA. EQUIPE.</span><span>UM NOVO CAMPO. O MESMO INSTINTO.<b>CB® / 2026</b></span></footer>
+    <div id="overlay-pause" class="modal-layer hidden"><div class="panel pause-panel"><div class="eyebrow">RESPIRA. REAGRUPA.</div><h2>EM PAUSA<span>.</span></h2><p class="panel-copy">A partida online continua acontecendo.</p><button class="button primary full" id="resume-game">RETOMAR PARTIDA →</button><button class="button secondary full" id="pause-settings">CONFIGURAÇÕES</button><button class="button secondary full" id="pause-controls">CONTROLES</button><div class="pause-social"><button class="button secondary" id="pause-friends">AMIGOS</button><button class="button secondary" id="pause-collection">COLEÇÃO</button></div><button class="button secondary full" id="fullscreen-button">TELA CHEIA</button><button class="text-button danger" id="pause-leave">SAIR DA PARTIDA ↗</button></div></div>
+    <div id="overlay-settings" class="modal-layer hidden"><div class="panel settings-panel"><button class="back-button" id="settings-back">← VOLTAR</button><div class="eyebrow">DO SEU JEITO</div><h2>CONFIGURAÇÕES<span>.</span></h2><div class="settings-grid">
+      <label class="setting">Sensibilidade do mouse<output id="out-sensitivity"></output><input id="setting-sensitivity" type="range" min="0.3" max="3" step="0.05"></label>
+      <label class="setting">Campo de visão<output id="out-fov"></output><input id="setting-fov" type="range" min="65" max="110" step="1"></label>
+      <label class="setting">Volume geral<output id="out-master"></output><input id="setting-master" type="range" min="0" max="1" step="0.01"></label>
+      <label class="setting">Efeitos sonoros<output id="out-effects"></output><input id="setting-effects" type="range" min="0" max="1" step="0.01"></label>
+      <label class="setting">Escala de renderização<output id="out-renderScale"></output><input id="setting-renderScale" type="range" min="0.5" max="1.5" step="0.1"></label>
+      <label class="setting select-setting">Qualidade gráfica<select id="setting-quality"><option value="low">Baixa</option><option value="medium">Média</option><option value="high">Alta</option></select></label>
+      <label class="check-setting"><input id="setting-showFPS" type="checkbox"><span>Mostrar contador de FPS</span></label><label class="check-setting"><input id="setting-reducedFlash" type="checkbox"><span>Reduzir luminosidade de flashbangs</span></label>
+      <label class="check-setting"><input id="setting-showNames" type="checkbox"><span>Mostrar nomes dos jogadores visíveis</span></label></div><p class="settings-note">Suas preferências são salvas automaticamente neste navegador.</p></div></div>
+    <div id="overlay-controls" class="modal-layer hidden"><div class="panel controls-panel"><button class="back-button" id="controls-back">← VOLTAR</button><div class="eyebrow">CONHEÇA SEU EQUIPAMENTO</div><h2>CONTROLES<span>.</span></h2><div id="controls-list" class="controls-list"></div><p class="settings-note">Use teclado e mouse em um computador. C é a tecla recomendada para agachar: Ctrl+W pode fechar a aba. No ar, pressione Espaço + C para dar dash. Esc libera o cursor.</p></div></div>
+    <div id="overlay-buy" class="modal-layer buy-layer hidden"><div class="panel buy-panel"><div class="buy-heading"><div><div class="eyebrow">EQUIPE-SE PARA O ROUND</div><h2>ARSENAL<span>.</span></h2></div><div class="buy-balance"><span>SALDO DISPONÍVEL</span><strong id="buy-balance">$ 800</strong></div><button class="close-button" id="buy-close" aria-label="Fechar arsenal">×</button></div><p id="buy-status" class="buy-status">Você só pode comprar na sua base nos primeiros 15 segundos.</p><nav class="buy-tabs"><button data-category="secondary" class="active">PISTOLAS</button><button data-category="primary">PRIMÁRIAS</button><button data-category="equipment">EQUIPAMENTOS</button><button data-category="grenade">GRANADAS</button></nav><div id="buy-items" class="buy-items"></div><div class="buy-footer"><span>COMPRAS VALIDADAS PELO SERVIDOR</span><span><kbd>B</kbd> FECHAR</span></div></div></div>
+    <div id="overlay-score" class="score-layer hidden"><div class="panel score-panel"><div class="eyebrow">DUST BLOCK / AO VIVO</div><h2>PLACAR<span>.</span></h2><div class="score-table"><table><thead><tr><th>JOGADOR</th><th>TIME</th><th>K</th><th>D</th><th>A</th><th>PONTOS</th><th>PING</th></tr></thead><tbody id="score-rows"></tbody></table></div></div></div>
+
+    <div id="overlay-friends" class="modal-layer hidden"><section class="panel social-panel" aria-label="Amigos"><button class="back-button" id="friends-back">← VOLTAR</button><div class="eyebrow">JOGUE JUNTO</div><h2>SEU ESQUADRÃO<span>.</span></h2><p class="panel-copy">Adicione amigos pelo código. A lista e os convites pertencem a este servidor.</p><div class="friend-code-box"><span>SEU CÓDIGO</span><strong id="profile-code">CONECTANDO</strong><button class="button secondary" id="copy-profile-code">COPIAR</button></div><form id="friend-form" class="join-fields"><label class="sr-only" for="friend-code">Código do amigo</label><input id="friend-code" type="text" placeholder="8 LETRAS" maxlength="8" minlength="8" pattern="[A-Za-z]{8}" autocomplete="off"><button class="button primary" type="submit">ADICIONAR ＋</button></form><div class="social-section-title">SOLICITAÇÕES <span id="request-count">0</span></div><div id="friend-requests" class="social-list"></div><div class="social-section-title">AMIGOS <span id="friend-count">0</span></div><div id="friend-list" class="social-list"></div></section></div>
+    <div id="overlay-collection" class="modal-layer hidden"><section class="panel collection-panel" aria-label="Coleção de cosméticos"><button class="back-button" id="collection-back">← VOLTAR</button><div class="eyebrow">CONQUISTE SEU ESTILO</div><h2>SUA COLEÇÃO<span>.</span></h2><p class="panel-copy">Cada eliminação concede uma caixa gratuita. Skins mudam apenas o visual e são salvas neste servidor.</p><nav class="collection-tabs"><button data-collection="crates" class="active">CAIXAS</button><button data-collection="weapon">ARMAS + FACA</button><button data-collection="character">PERSONAGENS</button></nav><div id="collection-crates"><div class="crate-grid"><article class="crate-card weapon-crate"><div class="crate-art">◇</div><span>CAIXA DE ARMAS</span><h3>ACABAMENTOS</h3><p>Um visual para seu arsenal e sua faca.</p><button class="button primary full" id="open-weapon-crate">ABRIR <b id="weapon-crate-count">0</b></button></article><article class="crate-card character-crate"><div class="crate-art">◈</div><span>CAIXA DE PERSONAGENS</span><h3>UNIFORMES</h3><p>Novas cores para entrar na arena.</p><button class="button primary full" id="open-character-crate">ABRIR <b id="character-crate-count">0</b></button></article></div><p class="crate-odds" id="crate-odds"></p></div><div id="collection-skins" class="skin-grid hidden"></div><div id="crate-result" class="crate-result hidden" role="status"></div><p id="profile-sync-note" class="settings-note">Conecte-se ao servidor para acessar sua coleção.</p></section></div>
+    <div id="toast-container" class="toast-container" role="status"></div>
+    <div id="flash" class="flash"></div><div id="damage" class="damage"></div>
+  </div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/game.js"></script>
+</body>
+</html>
